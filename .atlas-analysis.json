@@ -1,0 +1,128 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "KloudMate Agent",
+  "projectDescription": "OpenTelemetry Collector distribution with automated deployment, remote configuration, and auto-instrumentation support",
+  "theme": "aspen",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Installation",
+            "pages": [
+              "installation/overview",
+              "installation/linux",
+              "installation/docker",
+              "installation/kubernetes",
+              "installation/windows"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/overview",
+              "configuration/remote-config",
+              "configuration/environment-variables",
+              "configuration/opentelemetry-components"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/auto-instrumentation",
+              "features/lifecycle-management",
+              "features/synthetic-monitoring",
+              "features/multi-platform-support"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/host-agent",
+              "architecture/kubernetes-agent",
+              "architecture/collector-lifecycle"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/monitoring",
+              "operations/troubleshooting",
+              "operations/upgrading",
+              "operations/uninstalling"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Components",
+        "groups": [
+          {
+            "group": "OpenTelemetry Components",
+            "pages": [
+              "components/overview",
+              "components/receivers",
+              "components/processors",
+              "components/exporters",
+              "components/extensions"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "CLI Commands",
+            "pages": [
+              "api/cli-overview",
+              "api/kmagent",
+              "api/kubeagent"
+            ]
+          },
+          {
+            "group": "Configuration API",
+            "pages": [
+              "api/config-structure",
+              "api/agent-config",
+              "api/collector-config"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Automated installation scripts for Linux, Docker, Kubernetes, and Windows",
+    "Remote configuration management via web interface",
+    "OpenTelemetry Collector lifecycle management",
+    "Auto-instrumentation for Java, Python, Node.js, Go, and .NET",
+    "Comprehensive observability with metrics, traces, and logs",
+    "Multi-platform deployment support"
+  ],
+  "publicApiSurface": [
+    "kmagent start - Start the agent service",
+    "kmagent stop - Stop the agent service",
+    "kubeagent - Kubernetes agent binary",
+    "KM_API_KEY - API key for authentication",
+    "KM_COLLECTOR_ENDPOINT - OpenTelemetry exporter endpoint",
+    "KM_COLLECTOR_CONFIG - Path to collector configuration file",
+    "KM_CONFIG_CHECK_INTERVAL - Interval for remote config updates",
+    "KM_UPDATE_ENDPOINT - Agent config update endpoint",
+    "KM_DOCKER_MODE - Enable Docker mode configuration",
+    "Helm chart: kloudmate/km-kube-agent",
+    "CRD: Instrumentation (OpenTelemetry auto-instrumentation)"
+  ]
+}
