@@ -1,0 +1,605 @@
+---
+title: Kubernetes Agent Architecture
+description: Understanding the Kubernetes agent deployment model with DaemonSet and Deployment
+icon: dharmachakra
+---
+
+## Overview
+
+The KloudMate Kubernetes Agent runs as both a **DaemonSet** (for node-level monitoring) and a **Deployment** (for cluster-level monitoring) within Kubernetes clusters. This dual-deployment architecture enables comprehensive observability across nodes, pods, and cluster resources.
+
+<img src="/docs/km_agent_k8s.png" alt="Kubernetes Agent Architecture" />
+
+## Deployment Architecture
+
+The Kubernetes agent uses a two-component architecture:
+
+<CardGroup cols={2}>
+  <Card title="DaemonSet Agent" icon="server">
+    Runs on every node to collect:
+    - Node-level metrics (CPU, memory, disk, network)
+    - Container metrics via cAdvisor
+    - Host logs and container logs
+    - eBPF-based network monitoring
+  </Card>
+  <Card title="Deployment Agent" icon="layer-group">
+    Runs as a single replica to collect:
+    - Cluster-level metrics
+    - Kubernetes events
+    - API server metrics
+    - Custom resource monitoring
+  </Card>
+</CardGroup>
+
+<Note>
+The eBPF receiver is automatically disabled in Deployment mode as it requires host-level access available only to DaemonSet pods.
+</Note>
+
+## Agent Components
+
+The Kubernetes agent is structurally different from the host agent, with simplified lifecycle management:
+
+```go internal/k8sagent/agent.go
+type K8sAgent struct {
+    Cfg       *K8sConfig
+    Logger    *zap.SugaredLogger
+    Collector *otelcol.Collector
+    K8sClient *kubernetes.Clientset
+    
+    collectorMu     sync.Mutex
+    wg              sync.WaitGroup
+    collectorCtx    context.Context
+    collectorCancel context.CancelFunc
+    stopCh          chan struct{}
+    AgentInfo       AgentInfo
+}
+```
+
+### Configuration Structure
+
+```go internal/k8sagent/agent.go
+type K8sConfig struct {
+    APIKey              string `env:"KM_API_KEY"`
+    CollectorEndpoint   string `env:"KM_COLLECTOR_ENDPOINT"`
+    ConfigCheckInterval string `env:"KM_CONFIG_CHECK_INTERVAL"`
+    DeploymentMode      string `env:"DEPLOYMENT_MODE"`
+    ConfigMapName       string `env:"CONFIGMAP_NAME"`
+    PodNamespace        string `env:"POD_NAMESPACE"`
+}
+```
+
+### Agent Initialization
+
+<Steps>
+  <Step title="Logger Setup">
+    The agent initializes a production-grade logger with configurable log levels.
+    
+    ```go internal/k8sagent/agent.go
+    zapCfg := zap.NewProductionConfig()
+    zapCfg.Level = zap.NewAtomicLevelAt(kmlogger.ParseLogLevel())
+    zapLogger, err := zapCfg.Build()
+    logger := zapLogger.Sugar()
+    ```
+  </Step>
+  
+  <Step title="Configuration Loading">
+    Configuration is loaded from environment variables injected by Kubernetes.
+    
+    ```go internal/k8sagent/agent.go
+    cfg := NewK8sConfig()
+    
+    if strings.ToUpper(config.DeploymentMode) == "DAEMONSET" {
+        config.DeploymentMode = "DAEMONSET"
+    } else {
+        config.DeploymentMode = "DEPLOYMENT"
+    }
+    ```
+  </Step>
+  
+  <Step title="Kubernetes Client Creation">
+    The agent creates a Kubernetes client using in-cluster configuration.
+    
+    ```go internal/k8sagent/agent.go
+    kubecfg, err := rest.InClusterConfig()
+    if err != nil {
+        return nil, fmt.Errorf("failed to load in-cluster config: %w", err)
+    }
+    
+    k8sClient, err := kubernetes.NewForConfig(kubecfg)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+    }
+    ```
+  </Step>
+  
+  <Step title="Version Information">
+    Agent version information is set as environment variables for use by processors.
+    
+    ```go internal/k8sagent/agent.go
+    func (r *AgentInfo) setEnvForAgentVersion() {
+        os.Setenv("KM_AGENT_VERSION", r.Version)
+    }
+    
+    agent.AgentInfo.setEnvForAgentVersion()
+    agent.AgentInfo.CollectorVersion = version.GetCollectorVersion()
+    ```
+  </Step>
+</Steps>
+
+## Collector Lifecycle
+
+Unlike the host agent, the Kubernetes agent has a simpler lifecycle without remote configuration updates:
+
+### Startup Sequence
+
+```go internal/k8sagent/agent.go
+func (km *K8sAgent) StartAgent(ctx context.Context) error {
+    km.Logger.Infow("starting kubernetes agent",
+        "version", km.AgentInfo.Version,
+        "commitSHA", km.AgentInfo.CommitSHA,
+        "collectorVersion", km.AgentInfo.CollectorVersion,
+    )
+    return km.Start(ctx)
+}
+
+func (a *K8sAgent) Start(ctx context.Context) error {
+    if err := a.startInternalCollector(); err != nil {
+        return fmt.Errorf("failed to start collector: %w", err)
+    }
+    a.Logger.Info("collector agent started")
+    return nil
+}
+```
+
+### Collector Creation
+
+The collector is created with deployment-mode-specific component filtering:
+
+```go internal/k8sagent/collector.go
+func (a *K8sAgent) startInternalCollector() error {
+    a.collectorMu.Lock()
+    defer a.collectorMu.Unlock()
+    
+    collectorSettings := shared.CollectorInfoFactory(a.otelConfigPath())
+    
+    if a.Cfg.DeploymentMode == "DEPLOYMENT" {
+        factories, err := collectorSettings.Factories()
+        if err == nil {
+            // eBPF receiver cannot run in deployment mode
+            for typeName := range factories.Receivers {
+                if typeName.String() == "ebpfreceiver" {
+                    delete(factories.Receivers, typeName)
+                }
+            }
+            collectorSettings.Factories = func() (otelcol.Factories, error) {
+                return factories, nil
+            }
+        }
+    }
+    
+    // Create context for this collector instance
+    a.collectorCtx, a.collectorCancel = context.WithCancel(context.Background())
+    
+    collector, err := otelcol.NewCollector(collectorSettings)
+    if err != nil {
+        a.collectorCancel()
+        return fmt.Errorf("failed to create new collector: %w", err)
+    }
+    a.Collector = collector
+    
+    // Start collector in goroutine
+    a.wg.Add(1)
+    go func(col *otelcol.Collector, ctx context.Context) {
+        defer a.wg.Done()
+        
+        runErr := col.Run(ctx)
+        
+        a.collectorMu.Lock()
+        if a.Collector == col {
+            a.Collector = nil
+        }
+        a.collectorMu.Unlock()
+        
+        if runErr != nil {
+            a.Logger.Errorw("collector exited with error", "error", runErr)
+        }
+    }(a.Collector, a.collectorCtx)
+    
+    return nil
+}
+```
+
+### Configuration Paths
+
+The agent uses different configuration files based on deployment mode:
+
+```go internal/k8sagent/agent.go
+func (c *K8sAgent) otelConfigPath() string {
+    daemonsetURI := "/etc/kmagent/agent-daemonset.yaml"
+    deploymentURI := "/etc/kmagent/agent-deployment.yaml"
+    
+    if c.Cfg.DeploymentMode == "DAEMONSET" {
+        return daemonsetURI
+    } else {
+        return deploymentURI
+    }
+}
+```
+
+<Note>
+Configuration files are mounted from ConfigMaps and should not be modified manually. Use the KloudMate web interface for configuration changes.
+</Note>
+
+## Graceful Shutdown
+
+The Kubernetes agent implements a multi-stage shutdown process:
+
+<Steps>
+  <Step title="Signal Handler">
+    The main function sets up signal handlers for SIGINT and SIGTERM.
+    
+    ```go cmd/kubeagent/main.go
+    func handleSignals(cancelFunc context.CancelFunc, agent *k8sagent.K8sAgent) {
+        sigChan := make(chan os.Signal, 1)
+        signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+        
+        go func() {
+            sig := <-sigChan
+            agent.Logger.Warnf("Received signal %s, initiating shutdown...", sig)
+            cancelFunc()
+            agent.Stop()
+        }()
+    }
+    ```
+  </Step>
+  
+  <Step title="Collector Shutdown">
+    The collector is gracefully stopped with a timeout.
+    
+    ```go internal/k8sagent/collector.go
+    func (a *K8sAgent) stopInternalCollector() {
+        a.collectorMu.Lock()
+        defer a.collectorMu.Unlock()
+        
+        if a.Collector == nil {
+            return
+        }
+        
+        // Cancel collector context
+        if a.collectorCancel != nil {
+            a.collectorCancel()
+        }
+        
+        // Shutdown with timeout
+        shutdownCtx, shutdownCancel := context.WithTimeout(
+            context.Background(), 10*time.Second)
+        defer shutdownCancel()
+        
+        done := make(chan struct{})
+        go func() {
+            a.Collector.Shutdown()
+            close(done)
+        }()
+        
+        select {
+        case <-done:
+            a.Logger.Info("collector instance stopped successfully")
+        case <-shutdownCtx.Done():
+            a.Logger.Warnw("collector shutdown timed out", "timeout", "10s")
+        }
+        
+        a.Collector = nil
+    }
+    ```
+  </Step>
+  
+  <Step title="Wait for Goroutines">
+    The agent waits for all goroutines to complete before exiting.
+    
+    ```go internal/k8sagent/agent.go
+    func (a *K8sAgent) Stop() {
+        a.Logger.Info("stopping collector agent")
+        close(a.stopCh)
+        a.wg.Wait()
+        a.stopInternalCollector()
+        a.Logger.Info("collector agent stopped")
+    }
+    ```
+  </Step>
+</Steps>
+
+## Configuration Management
+
+The Kubernetes agent receives configuration through ConfigMaps:
+
+<Warning>
+**Important:** Manually updating ConfigMaps for DaemonSet or Deployment agents is **not recommended**. 
+
+Configurations may be overwritten by updates sent from KloudMate APIs. Always use the **KloudMate Agent Config Editor** (web-based YAML editor) to ensure configurations are properly synchronized and persisted.
+</Warning>
+
+### ConfigMap Structure
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: km-agent-daemonset-config
+  namespace: km-agent
+data:
+  agent-daemonset.yaml: |
+    receivers:
+      hostmetrics:
+        collection_interval: 30s
+        scrapers:
+          cpu:
+          memory:
+          disk:
+          network:
+    # ... rest of configuration
+```
+
+### Environment Variables
+
+Key environment variables are injected via Kubernetes:
+
+<CodeGroup>
+```yaml DaemonSet Environment
+env:
+  - name: KM_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: km-agent-secret
+        key: api-key
+  - name: KM_COLLECTOR_ENDPOINT
+    value: "https://otel.kloudmate.com:4318"
+  - name: DEPLOYMENT_MODE
+    value: "DAEMONSET"
+  - name: CONFIGMAP_NAME
+    value: "km-agent-daemonset-config"
+  - name: POD_NAMESPACE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
+  - name: NODE_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: spec.nodeName
+```
+
+```yaml Deployment Environment
+env:
+  - name: KM_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: km-agent-secret
+        key: api-key
+  - name: KM_COLLECTOR_ENDPOINT
+    value: "https://otel.kloudmate.com:4318"
+  - name: DEPLOYMENT_MODE
+    value: "DEPLOYMENT"
+  - name: CONFIGMAP_NAME
+    value: "km-agent-deployment-config"
+  - name: POD_NAMESPACE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
+```
+</CodeGroup>
+
+## Service Account and RBAC
+
+The Kubernetes agent requires specific permissions to monitor cluster resources:
+
+<Tabs>
+  <Tab title="ServiceAccount">
+    ```yaml
+    apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: km-agent
+      namespace: km-agent
+    ```
+  </Tab>
+  
+  <Tab title="ClusterRole">
+    ```yaml
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    metadata:
+      name: km-agent
+    rules:
+      - apiGroups: [""]
+        resources:
+          - nodes
+          - nodes/stats
+          - pods
+          - events
+          - services
+          - endpoints
+        verbs: ["get", "list", "watch"]
+      - apiGroups: ["apps"]
+        resources:
+          - deployments
+          - daemonsets
+          - statefulsets
+        verbs: ["get", "list", "watch"]
+    ```
+  </Tab>
+  
+  <Tab title="ClusterRoleBinding">
+    ```yaml
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    metadata:
+      name: km-agent
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: ClusterRole
+      name: km-agent
+    subjects:
+      - kind: ServiceAccount
+        name: km-agent
+        namespace: km-agent
+    ```
+  </Tab>
+</Tabs>
+
+## Node Selection and Tolerations
+
+The DaemonSet agent must run on all nodes, including those with taints:
+
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: km-agent-daemonset
+spec:
+  template:
+    spec:
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          effect: NoSchedule
+      # Custom tolerations can be added via Helm values
+```
+
+<Note>
+When installing on nodes with custom taints, specify tolerations using Helm parameters:
+
+```bash
+helm install kloudmate-release kloudmate/km-kube-agent \
+  --set tolerations[0].key="env" \
+  --set tolerations[0].operator="Equal" \
+  --set tolerations[0].value="production" \
+  --set tolerations[0].effect="NoSchedule"
+```
+</Note>
+
+## GKE Private Clusters
+
+For private GKE clusters, a firewall rule is required for webhook admission:
+
+<Warning>
+**GKE Private Cluster Configuration:**
+
+You need to allow master nodes access to port `9443/tcp` on worker nodes for the admission webhook to function properly.
+
+See the [GKE documentation](https://cloud.google.com/kubernetes-engine/docs/how-to/private-clusters#add_firewall_rules) for adding firewall rules.
+</Warning>
+
+## Health Monitoring
+
+The agent provides health endpoints for Kubernetes probes:
+
+```yaml
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+    - name: km-agent
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: 13133
+        initialDelaySeconds: 30
+        periodSeconds: 10
+      readinessProbe:
+        httpGet:
+          path: /readyz
+          port: 13133
+        initialDelaySeconds: 10
+        periodSeconds: 5
+```
+
+## Resource Requirements
+
+Recommended resource limits for optimal performance:
+
+<Tabs>
+  <Tab title="DaemonSet">
+    ```yaml
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+    ```
+  </Tab>
+  
+  <Tab title="Deployment">
+    ```yaml
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "50m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+    ```
+  </Tab>
+</Tabs>
+
+## Monitoring Multiple Namespaces
+
+The agent can monitor specific namespaces:
+
+```bash
+helm install kloudmate-release kloudmate/km-kube-agent \
+  --set "monitoredNamespaces={bookinfo,mongodb,cassandra}" \
+  --set featuresEnabled.apm=true
+```
+
+<Note>
+Namespaces should be comma-separated. The agent will automatically discover services and pods in these namespaces.
+</Note>
+
+## Main Entry Point
+
+The Kubernetes agent has a simplified main function:
+
+```go cmd/kubeagent/main.go
+var (
+    version = "0.1.0"
+    commit  = "none"
+)
+
+func main() {
+    appCtx, cancelAppCtx := context.WithCancel(context.Background())
+    defer cancelAppCtx()
+    
+    agent, err := k8sagent.NewK8sAgent(
+        &k8sagent.AgentInfo{Version: version, CommitSHA: commit})
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    handleSignals(cancelAppCtx, agent)
+    
+    if err = agent.StartAgent(appCtx); err != nil {
+        agent.Logger.Errorf("agent could not be started: %s", err.Error())
+    }
+    
+    agent.AwaitShutdown()
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Collector Lifecycle" icon="arrows-rotate" href="/architecture/collector-lifecycle">
+    Understand collector lifecycle management in Kubernetes
+  </Card>
+  <Card title="Deployment Guide" icon="rocket" href="/deployment/kubernetes">
+    Deploy the agent to your Kubernetes cluster
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/kubernetes">
+    Configure the Kubernetes agent
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/troubleshooting/kubernetes">
+    Resolve common Kubernetes deployment issues
+  </Card>
+</CardGroup>

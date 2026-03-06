@@ -1,0 +1,579 @@
+---
+title: Kubernetes Installation
+description: Deploy the KloudMate Agent on Kubernetes using Helm with DaemonSet and Deployment modes
+icon: dharmachakra
+---
+
+The KloudMate Agent for Kubernetes deploys as both a DaemonSet (for node-level monitoring) and a Deployment (for cluster-level monitoring), with optional auto-instrumentation support via the OpenTelemetry Operator.
+
+## Prerequisites
+
+### Required
+
+- Kubernetes cluster version 1.19+
+- Helm 3.8+ installed
+- kubectl configured with cluster-admin permissions
+- API Key from [KloudMate Settings](https://app.kloudmate.com/settings/)
+
+### Optional
+
+- cert-manager (can be installed automatically as a dependency)
+- OpenTelemetry Operator (installed automatically with the Helm chart)
+
+## Quick Installation
+
+<Steps>
+  <Step title="Install CRD">
+    The Instrumentation CRD must be installed before the Helm chart:
+    
+    ```bash
+    kubectl apply -f https://raw.githubusercontent.com/kloudmate/km-agent/refs/heads/develop/deployment/helm/km-kube-agent/crds/crd-otel-instrumentation.yaml
+    ```
+  </Step>
+  
+  <Step title="Add Helm Repository">
+    ```bash
+    helm repo add kloudmate https://kloudmate.github.io/km-agent
+    helm repo update
+    ```
+  </Step>
+  
+  <Step title="Install the Agent">
+    ```bash
+    helm install kloudmate-release kloudmate/km-kube-agent \
+      --namespace km-agent --create-namespace \
+      --set API_KEY="<YOUR_API_KEY>" \
+      --set COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+      --set clusterName="my-cluster"
+    ```
+  </Step>
+</Steps>
+
+<Note>
+Replace `<YOUR_API_KEY>` with your actual API key and `my-cluster` with your cluster name.
+</Note>
+
+## Detailed Installation
+
+### Step 1: Install CRD (Required)
+
+The Instrumentation Custom Resource Definition (CRD) enables auto-instrumentation capabilities:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kloudmate/km-agent/refs/heads/develop/deployment/helm/km-kube-agent/crds/crd-otel-instrumentation.yaml
+```
+
+Verify CRD installation:
+```bash
+kubectl get crd instrumentations.opentelemetry.io
+```
+
+### Step 2: Add Helm Repository
+
+```bash
+helm repo add kloudmate https://kloudmate.github.io/km-agent
+helm repo update
+```
+
+Verify the repository:
+```bash
+helm search repo kloudmate
+```
+
+Expected output:
+```
+NAME                         CHART VERSION  APP VERSION  DESCRIPTION
+kloudmate/km-kube-agent      1.2.0          1.2.0        A Helm chart for Kloumate's Kubernetes agent
+```
+
+### Step 3: Install with Helm
+
+#### Basic Installation
+
+```bash
+helm install kloudmate-release kloudmate/km-kube-agent \
+  --namespace km-agent \
+  --create-namespace \
+  --set API_KEY="your-api-key" \
+  --set COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+  --set clusterName="production-cluster"
+```
+
+#### With Features Enabled
+
+Enable APM (Application Performance Monitoring) and logs:
+
+```bash
+helm install kloudmate-release kloudmate/km-kube-agent \
+  --namespace km-agent \
+  --create-namespace \
+  --set API_KEY="your-api-key" \
+  --set COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+  --set clusterName="production-cluster" \
+  --set featuresEnabled.apm=true \
+  --set featuresEnabled.logs=true
+```
+
+#### With Namespace Monitoring
+
+Monitor specific namespaces:
+
+```bash
+helm install kloudmate-release kloudmate/km-kube-agent \
+  --namespace km-agent \
+  --create-namespace \
+  --set API_KEY="your-api-key" \
+  --set COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+  --set clusterName="production-cluster" \
+  --set "monitoredNamespaces={bookinfo,mongodb,cassandra}" \
+  --set featuresEnabled.apm=true \
+  --set featuresEnabled.logs=true
+```
+
+<Note>
+For `monitoredNamespaces`, provide comma-separated namespace names without spaces.
+</Note>
+
+## Configuration Options
+
+### Required Parameters
+
+| Parameter | Description | Example |
+|-----------|-------------|----------|
+| `API_KEY` | KloudMate authentication key | `km_xxx...` |
+| `COLLECTOR_ENDPOINT` | OTLP endpoint for data export | `https://otel.kloudmate.com:4318` |
+| `clusterName` | Unique identifier for your cluster | `production-k8s` |
+
+### Feature Flags
+
+| Parameter | Description | Default |
+|-----------|-------------|----------|
+| `featuresEnabled.metrics` | Enable metrics collection | `true` |
+| `featuresEnabled.traces` | Enable trace collection | `true` |
+| `featuresEnabled.apm` | Enable application performance monitoring | `false` |
+| `featuresEnabled.logs` | Enable log collection | `false` |
+
+Example:
+```bash
+--set featuresEnabled.apm=true \
+--set featuresEnabled.logs=true \
+--set featuresEnabled.metrics=true \
+--set featuresEnabled.traces=true
+```
+
+### Platform Configuration
+
+| Parameter | Description | Default |
+|-----------|-------------|----------|
+| `KM_UPDATE_ENDPOINT` | Remote config check endpoint | `https://api.kloudmate.com/agents/config-check` |
+| `KM_CONFIG_CHECK_INTERVAL` | Config update check interval | `30s` |
+| `KM_CFG_UPDATER_RPC_ADDR` | Config updater RPC port | `5501` |
+| `KM_XLOG_PATHS` | Additional log paths | `[]` |
+
+### Image Configuration
+
+| Parameter | Description | Default |
+|-----------|-------------|----------|
+| `image.repository` | Agent image repository | `ghcr.io/kloudmate/km-kube-agent` |
+| `image.tag` | Image tag | `latest` |
+| `image.pullPolicy` | Image pull policy | `Always` |
+
+## Advanced Configuration
+
+### Node Taints and Tolerations
+
+If your cluster uses node taints, configure tolerations:
+
+```bash
+helm install kloudmate-release kloudmate/km-kube-agent \
+  --namespace km-agent --create-namespace \
+  --set API_KEY="your-api-key" \
+  --set COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+  --set clusterName="my-cluster" \
+  --set tolerations[0].key="env" \
+  --set tolerations[0].operator="Equal" \
+  --set tolerations[0].value="production" \
+  --set tolerations[0].effect="NoSchedule" \
+  --set tolerations[1].key="workload" \
+  --set tolerations[1].operator="Equal" \
+  --set tolerations[1].value="monitoring" \
+  --set tolerations[1].effect="NoSchedule"
+```
+
+**Default tolerations** (automatically configured):
+```yaml
+tolerations:
+  - key: "node.kubernetes.io/not-ready"
+    operator: "Exists"
+    effect: "NoExecute"
+    tolerationSeconds: 300
+  - key: "node.kubernetes.io/unreachable"
+    operator: "Exists"
+    effect: "NoExecute"
+    tolerationSeconds: 300
+```
+
+### Node Affinity
+
+Control pod scheduling preferences:
+
+```yaml values.yaml
+nodeAffinity:
+  preferredDuringSchedulingIgnoredDuringExecution:
+  - weight: 100
+    preference:
+      matchExpressions:
+      - key: kubernetes.io/os
+        operator: In
+        values:
+        - linux
+  - weight: 80
+    preference:
+      matchExpressions:
+      - key: node.kubernetes.io/instance-type
+        operator: NotIn
+        values:
+        - spot
+```
+
+Install with custom values file:
+```bash
+helm install kloudmate-release kloudmate/km-kube-agent \
+  --namespace km-agent --create-namespace \
+  -f values.yaml
+```
+
+### Dependency Management
+
+The chart includes optional dependencies:
+
+```yaml Chart.yaml
+dependencies:
+  - name: cert-manager
+    version: v1.18.2
+    repository: https://charts.jetstack.io
+    condition: cert-manager.enabled
+  - name: opentelemetry-operator
+    version: 0.90.0
+    repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+    condition: opentelemetry-operator.enabled
+```
+
+**Enable cert-manager** (if not already installed):
+```bash
+helm install kloudmate-release kloudmate/km-kube-agent \
+  --set cert-manager.enabled=true \
+  --set cert-manager.crds.enabled=true \
+  ...
+```
+
+**Note**: The OpenTelemetry Operator is enabled by default (`opentelemetry-operator.enabled=true`).
+
+## GKE Private Cluster Configuration
+
+<Warning>
+For **private GKE clusters**, you must configure firewall rules to allow webhook traffic.
+</Warning>
+
+The OpenTelemetry Operator uses admission webhooks on port `9443/tcp`. Configure your firewall:
+
+### Option 1: Add Firewall Rule for Port 9443
+
+```bash
+gcloud compute firewall-rules create allow-webhook-traffic \
+  --network=<YOUR_VPC_NETWORK> \
+  --allow=tcp:9443 \
+  --source-ranges=<MASTER_CIDR> \
+  --target-tags=<NODE_TAGS> \
+  --description="Allow webhook traffic for OpenTelemetry Operator"
+```
+
+### Option 2: Update Existing Health Check Rule
+
+Modify the existing rule that allows `80/tcp`, `443/tcp`, and `10254/tcp` to also include `9443/tcp`.
+
+See:
+- [GCP Load Balancing Health Checks](https://cloud.google.com/load-balancing/docs/tcp/setting-up-tcp#config-hc-firewall)
+- [GKE Private Cluster Firewall](https://cloud.google.com/kubernetes-engine/docs/how-to/private-clusters#add_firewall_rules)
+- [Kubernetes Issue #79739](https://github.com/kubernetes/kubernetes/issues/79739)
+
+## Verification
+
+### Check Deployed Resources
+
+```bash
+# Check namespace
+kubectl get ns km-agent
+
+# Check DaemonSet (runs on each node)
+kubectl get daemonset -n km-agent
+
+# Check Deployment (cluster-level agent)
+kubectl get deployment -n km-agent
+
+# Check pods
+kubectl get pods -n km-agent
+
+# Check services
+kubectl get svc -n km-agent
+```
+
+Expected output:
+```
+NAME                              READY   STATUS    RESTARTS   AGE
+km-agent-xxxxx                    1/1     Running   0          2m
+km-agent-cluster-xxxxxxxxx-yyyyy  1/1     Running   0          2m
+km-fleet-manager-xxxxxxxxx-zzzzz  1/1     Running   0          2m
+km-operator-xxxxxxxxx-aaaaa       1/1     Running   0          2m
+```
+
+### Check Logs
+
+```bash
+# DaemonSet logs
+kubectl logs -n km-agent daemonset/km-agent -f
+
+# Deployment logs
+kubectl logs -n km-agent deployment/km-agent-cluster -f
+
+# Operator logs
+kubectl logs -n km-agent deployment/km-operator -f
+```
+
+### Verify Instrumentation CRD
+
+```bash
+kubectl get instrumentation -n km-agent
+```
+
+## Upgrading
+
+### Update Helm Repository
+
+```bash
+helm repo update kloudmate
+```
+
+### Upgrade Release
+
+```bash
+helm upgrade kloudmate-release kloudmate/km-kube-agent \
+  --namespace km-agent \
+  --reuse-values
+```
+
+### Upgrade with New Values
+
+```bash
+helm upgrade kloudmate-release kloudmate/km-kube-agent \
+  --namespace km-agent \
+  --set featuresEnabled.apm=true \
+  --reuse-values
+```
+
+### View Upgrade History
+
+```bash
+helm history kloudmate-release -n km-agent
+```
+
+### Rollback
+
+```bash
+# Rollback to previous version
+helm rollback kloudmate-release -n km-agent
+
+# Rollback to specific revision
+helm rollback kloudmate-release 2 -n km-agent
+```
+
+## Configuration Management
+
+<Warning>
+**Do not manually edit ConfigMaps** for the DaemonSet or Deployment agents. Configurations may be overwritten by updates from KloudMate APIs.
+</Warning>
+
+Use the **KloudMate Agent Config Editor** (web-based YAML editor) to manage configurations:
+
+1. Log in to [KloudMate Dashboard](https://app.kloudmate.com)
+2. Navigate to **Agents** → **Your Cluster**
+3. Use the Config Editor to modify OpenTelemetry configuration
+4. Changes are automatically synchronized to agents
+
+Configuration updates are checked every `KM_CONFIG_CHECK_INTERVAL` (default: 30s).
+
+## Uninstallation
+
+### Remove Helm Release
+
+```bash
+helm uninstall kloudmate-release -n km-agent
+```
+
+### Delete Namespace
+
+```bash
+kubectl delete namespace km-agent
+```
+
+### Remove CRD (Optional)
+
+```bash
+kubectl delete crd instrumentations.opentelemetry.io
+```
+
+<Warning>
+Deleting the CRD will remove all Instrumentation resources across the cluster.
+</Warning>
+
+## Troubleshooting
+
+### Pods Not Starting
+
+**Check pod status**:
+```bash
+kubectl get pods -n km-agent
+kubectl describe pod <pod-name> -n km-agent
+```
+
+**Common causes**:
+- Insufficient resources (CPU/memory)
+- Image pull errors (check image name and credentials)
+- Node taints preventing scheduling
+- Missing required environment variables
+
+### Webhook Errors (GKE Private Clusters)
+
+```
+Error: failed calling webhook "...": Post "https://...:443/...": context deadline exceeded
+```
+
+**Solution**: Add firewall rule for port 9443 (see [GKE Private Cluster Configuration](#gke-private-cluster-configuration)).
+
+### DaemonSet Pods Not Scheduled
+
+**Check node taints**:
+```bash
+kubectl describe nodes | grep -A 5 Taints
+```
+
+**Solution**: Add matching tolerations in Helm values.
+
+### Instrumentation Not Working
+
+**Check operator logs**:
+```bash
+kubectl logs -n km-agent deployment/km-operator -f
+```
+
+**Verify CRD installation**:
+```bash
+kubectl get crd instrumentations.opentelemetry.io
+```
+
+**Check namespace annotation**:
+```bash
+kubectl get instrumentation -n <your-namespace>
+```
+
+### Configuration Not Updating
+
+**Check fleet manager logs**:
+```bash
+kubectl logs -n km-agent deployment/km-fleet-manager -f
+```
+
+**Verify connectivity**:
+```bash
+kubectl exec -n km-agent <pod-name> -- wget -O- $KM_UPDATE_ENDPOINT
+```
+
+**Check interval setting**:
+```bash
+kubectl get deployment km-agent-cluster -n km-agent -o yaml | grep CONFIG_CHECK_INTERVAL
+```
+
+### High Memory Usage
+
+**Check resource usage**:
+```bash
+kubectl top pods -n km-agent
+```
+
+**Set resource limits**:
+```yaml values.yaml
+resources:
+  limits:
+    memory: 512Mi
+    cpu: 500m
+  requests:
+    memory: 256Mi
+    cpu: 100m
+```
+
+Apply with:
+```bash
+helm upgrade kloudmate-release kloudmate/km-kube-agent -f values.yaml -n km-agent
+```
+
+## Values Reference
+
+For a complete list of configurable values, see the [values.yaml](https://github.com/kloudmate/km-agent/blob/main/deployment/helm/km-kube-agent/values.yaml) file.
+
+Key configuration sections:
+
+```yaml values.yaml (excerpt)
+# Platform configuration
+API_KEY: ""  # REQUIRED
+COLLECTOR_ENDPOINT: "https://otel.kloudmate.com:4318"
+KM_UPDATE_ENDPOINT: "https://api.kloudmate.com/agents/config-check"
+KM_CONFIG_CHECK_INTERVAL: "30s"
+
+# Feature flags
+featuresEnabled:
+  apm: false
+  logs: false
+  metrics: true
+  traces: true
+
+# Cluster configuration
+clusterName: "km-cluster"
+monitoredNamespaces: []
+
+# Image settings
+image:
+  repository: ghcr.io/kloudmate/km-kube-agent
+  pullPolicy: Always
+  tag: "latest"
+
+# Dependencies
+opentelemetry-operator:
+  enabled: true
+cert-manager:
+  enabled: false
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Auto-Instrumentation" icon="wand-magic-sparkles" href="/features/auto-instrumentation">
+    Configure automatic application instrumentation
+  </Card>
+  <Card title="Namespace Monitoring" icon="layer-group" href="/configuration/namespace-monitoring">
+    Monitor specific namespaces and workloads
+  </Card>
+  <Card title="Configure Agent" icon="gear" href="/configuration/overview">
+    Customize OpenTelemetry receivers and processors
+  </Card>
+  <Card title="Verify Installation" icon="check" href="/getting-started/verify-installation">
+    Confirm data is flowing to KloudMate
+  </Card>
+</CardGroup>
+
+## Support
+
+For Kubernetes installation issues:
+
+- 📧 Email: support@kloudmate.com
+- 🐛 GitHub: [Report an issue](https://github.com/kloudmate/km-agent/issues)
+- 📦 Helm Chart: [Chart repository](https://github.com/kloudmate/km-agent/tree/main/deployment/helm)

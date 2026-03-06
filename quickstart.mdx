@@ -1,80 +1,501 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quick Start Guide"
+description: "Get KloudMate Agent up and running in minutes on Linux, Docker, or Kubernetes"
 ---
 
-## Get started in three steps
+Get started with KloudMate Agent in minutes. This guide will walk you through installation and basic configuration on your preferred platform.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
+Before installing KloudMate Agent, ensure you have:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="API Key" icon="key">
+    Obtain your API key from the KloudMate dashboard
+  </Card>
+  <Card title="Collector Endpoint" icon="server">
+    Default: `https://otel.kloudmate.com:4318`
+  </Card>
+  <Card title="Platform Access" icon="shield">
+    Appropriate permissions for your deployment platform
+  </Card>
+  <Card title="Network Access" icon="network-wired">
+    Outbound HTTPS access to the collector endpoint
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Choose Your Platform
+
+Select your deployment platform to get started:
+
+<Tabs>
+  <Tab title="Linux">
+    ### Linux Installation
+
+    Install KloudMate Agent on Linux using our automated installation script.
+
+    <Steps>
+      <Step title="Set Environment Variables">
+        Set your API key and collector endpoint:
+        
+        ```bash
+        export KM_API_KEY="<YOUR_API_KEY>"
+        export KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+        ```
+      </Step>
+
+      <Step title="Run Installation Script">
+        Download and execute the installation script:
+        
+        ```bash
+        bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_linux.sh)"
+        ```
+
+        The script will:
+        - Detect your Linux distribution (Debian/Ubuntu or RHEL-based)
+        - Install required dependencies (curl, wget, systemctl, jq)
+        - Download the appropriate package (.deb or .rpm)
+        - Install the package and configure the agent
+        - Start the agent as a systemd service
+      </Step>
+
+      <Step title="Verify Installation">
+        Check that the agent service is running:
+        
+        ```bash
+        sudo systemctl status kmagent
+        ```
+
+        You should see output indicating the service is "active (running)".
+      </Step>
+    </Steps>
+
+    <Accordion title="Manual Installation">
+      If you prefer manual installation:
+
+      1. Download the package from [GitHub Releases](https://github.com/kloudmate/km-agent/releases)
+      2. Install using your package manager:
+
+      <CodeGroup>
+        ```bash Debian/Ubuntu
+        sudo dpkg -i kmagent_*.deb
+        ```
+
+        ```bash RHEL/CentOS
+        sudo rpm -i kmagent-*.rpm
+        ```
+      </CodeGroup>
+
+      3. Configure environment variables in `/etc/kmagent/agent-config.yaml`
+      4. Start the service: `sudo systemctl start kmagent`
+    </Accordion>
+  </Tab>
+
+  <Tab title="Docker">
+    ### Docker Installation
+
+    Run KloudMate Agent as a Docker container for host-level metrics and log collection.
+
+    <Steps>
+      <Step title="Set Environment Variables">
+        Set your API key and collector endpoint:
+        
+        ```bash
+        export KM_API_KEY="<YOUR_API_KEY>"
+        export KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+        ```
+      </Step>
+
+      <Step title="Run Installation Script">
+        Execute the Docker installation script:
+        
+        ```bash
+        bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_docker.sh)"
+        ```
+
+        The agent container will be started with:
+        - Host network mode for accurate metrics
+        - Volume mounts for log collection
+        - Privileged mode for host metrics access
+      </Step>
+
+      <Step title="Verify Container">
+        Check that the container is running:
+        
+        ```bash
+        docker ps | grep km-agent
+        ```
+
+        View agent logs:
+        
+        ```bash
+        docker logs km-agent
+        ```
+      </Step>
+    </Steps>
+
+    <Accordion title="Manual Docker Run">
+      To run the container manually:
+
+      ```bash
+      docker run -d --name km-agent \
+        --network host \
+        --privileged \
+        -v /var/log:/var/log:ro \
+        -v /var/lib/docker/containers:/var/lib/docker/containers:ro \
+        -v /sys:/sys:ro \
+        -v /proc:/proc:ro \
+        -e KM_API_KEY="<YOUR_API_KEY>" \
+        -e KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+        ghcr.io/kloudmate/km-agent:latest
+      ```
+    </Accordion>
+  </Tab>
+
+  <Tab title="Kubernetes">
+    ### Kubernetes Installation
+
+    Deploy KloudMate Agent on Kubernetes using Helm.
+
+    <Steps>
+      <Step title="Install CRD">
+        First, install the required Custom Resource Definition:
+        
+        ```bash
+        kubectl apply -f https://raw.githubusercontent.com/kloudmate/km-agent/refs/heads/develop/deployment/helm/km-kube-agent/crds/crd-otel-instrumentation.yaml
+        ```
+      </Step>
+
+      <Step title="Add Helm Repository">
+        Add the KloudMate Helm repository:
+        
+        ```bash
+        helm repo add kloudmate https://kloudmate.github.io/km-agent
+        helm repo update
+        ```
+      </Step>
+
+      <Step title="Install Agent">
+        Install the agent using Helm:
+        
+        ```bash
+        helm install kloudmate-release kloudmate/km-kube-agent \
+          --namespace km-agent \
+          --create-namespace \
+          --set API_KEY="<YOUR_API_KEY>" \
+          --set COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+          --set clusterName="<YOUR_CLUSTER_NAME>"
+        ```
+      </Step>
+
+      <Step title="Verify Deployment">
+        Check that the agent pods are running:
+        
+        ```bash
+        kubectl get pods -n km-agent
+        ```
+
+        You should see both DaemonSet and Deployment pods in Running state.
+      </Step>
+    </Steps>
+
+    <Note>
+      For GKE private clusters, you may need to configure firewall rules to allow webhook traffic. See the [Kubernetes installation guide](/installation/kubernetes#gke-private-clusters) for details.
+    </Note>
+
+    <Accordion title="Enable Additional Features">
+      To enable APM and log collection:
+
+      ```bash
+      helm install kloudmate-release kloudmate/km-kube-agent \
+        --namespace km-agent \
+        --create-namespace \
+        --set API_KEY="<YOUR_API_KEY>" \
+        --set COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+        --set clusterName="<YOUR_CLUSTER_NAME>" \
+        --set featuresEnabled.apm=true \
+        --set featuresEnabled.logs=true
+      ```
+    </Accordion>
+  </Tab>
+</Tabs>
+
+## Configuration
+
+After installation, the agent uses default configuration suitable for most environments. You can customize the configuration using:
+
+### Environment Variables
+
+Key environment variables for all platforms:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `KM_API_KEY` | Authentication key for the collector | Required |
+| `KM_COLLECTOR_ENDPOINT` | OTLP HTTP endpoint URL | `https://otel.kloudmate.com:4318` |
+| `KM_CONFIG_CHECK_INTERVAL` | Remote config update interval (seconds) | `60` |
+| `KM_UPDATE_ENDPOINT` | Remote configuration API endpoint | `https://api.kloudmate.com/agents/config-check` |
+
+See the [Environment Variables](/configuration/environment-variables) reference for the complete list.
+
+### Default Configuration
+
+The agent ships with sensible defaults:
+
+<CodeGroup>
+```yaml Linux/macOS
+# /etc/kmagent/config.yaml (Linux)
+# /usr/local/etc/kmagent/config.yaml (macOS)
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+  hostmetrics:
+    collection_interval: 60s
+    scrapers:
+      - cpu
+      - memory
+      - disk
+      - filesystem
+      - network
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+  resourcedetection:
+    detectors: [system, env]
+
+exporters:
+  otlphttp:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    headers:
+      authorization: "Bearer ${env:KM_API_KEY}"
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp, hostmetrics]
+      processors: [resourcedetection, batch]
+      exporters: [otlphttp]
+```
+
+```yaml Docker
+# Container configuration
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+  hostmetrics:
+    collection_interval: 60s
+    scrapers:
+      - cpu
+      - memory
+      - disk
+      - filesystem
+      - network
+  docker_stats:
+    endpoint: unix:///var/run/docker.sock
+    collection_interval: 30s
+  filelog:
+    include:
+      - /var/log/**/*.log
+    include_file_name: false
+    include_file_path: true
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+
+exporters:
+  otlphttp:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    headers:
+      authorization: "Bearer ${env:KM_API_KEY}"
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp, hostmetrics, docker_stats]
+      processors: [batch]
+      exporters: [otlphttp]
+    logs:
+      receivers: [filelog]
+      processors: [batch]
+      exporters: [otlphttp]
+```
+
+```yaml Kubernetes
+# DaemonSet configuration
+receivers:
+  kubeletstats:
+    collection_interval: 30s
+    auth_type: serviceAccount
+    endpoint: https://${env:K8S_NODE_NAME}:10250
+    insecure_skip_verify: true
+  filelog:
+    include:
+      - /var/log/pods/**/*.log
+    include_file_name: false
+    include_file_path: true
+
+processors:
+  batch:
+    timeout: 10s
+  k8sattributes:
+    auth_type: serviceAccount
+    extract:
+      metadata:
+        - k8s.namespace.name
+        - k8s.pod.name
+        - k8s.pod.uid
+        - k8s.node.name
+
+exporters:
+  otlphttp:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    headers:
+      authorization: "Bearer ${env:KM_API_KEY}"
+
+service:
+  pipelines:
+    metrics:
+      receivers: [kubeletstats]
+      processors: [k8sattributes, batch]
+      exporters: [otlphttp]
+```
+</CodeGroup>
+
+For advanced configuration options, see the [Configuration Overview](/configuration/overview).
+
+## Verification
+
+After installation, verify that telemetry data is flowing:
+
+<Steps>
+  <Step title="Check Agent Status">
+    Verify the agent is running:
+
+    <CodeGroup>
+    ```bash Linux
+    sudo systemctl status kmagent
+    ```
+
+    ```bash Docker
+    docker ps | grep km-agent
+    docker logs km-agent
+    ```
+
+    ```bash Kubernetes
+    kubectl get pods -n km-agent
+    kubectl logs -n km-agent -l app=km-agent-daemonset
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Verify Data Collection">
+    Check that metrics are being collected. For Linux/Docker:
+
+    ```bash
+    curl http://localhost:13133/
+    ```
+
+    For Kubernetes:
+
+    ```bash
+    kubectl port-forward -n km-agent svc/km-agent-daemonset 13133:13133
+    curl http://localhost:13133/
+    ```
+
+    A healthy response indicates the collector is running.
+  </Step>
+
+  <Step title="View in Dashboard">
+    Log into your KloudMate dashboard to verify that metrics are appearing for your host/cluster.
+  </Step>
+</Steps>
+
+## Uninstallation
+
+<Accordion title="How to uninstall KloudMate Agent">
+  <Tabs>
+    <Tab title="Linux">
+      Run the uninstall script:
+
+      ```bash
+      bash -c "$(curl -L https://cdn.kloudmate.com/scripts/uninstall_linux.sh)"
+      ```
+
+      Or manually:
+      ```bash
+      sudo systemctl stop kmagent
+      sudo systemctl disable kmagent
+      sudo apt remove kmagent  # Debian/Ubuntu
+      sudo yum remove kmagent  # RHEL/CentOS
+      ```
+    </Tab>
+
+    <Tab title="Docker">
+      Stop and remove the container:
+
+      ```bash
+      docker stop km-agent
+      docker rm km-agent
+      ```
+    </Tab>
+
+    <Tab title="Kubernetes">
+      Uninstall using Helm:
+
+      ```bash
+      helm uninstall kloudmate-release -n km-agent
+      kubectl delete namespace km-agent
+      ```
+
+      Remove the CRD:
+      ```bash
+      kubectl delete -f https://raw.githubusercontent.com/kloudmate/km-agent/refs/heads/develop/deployment/helm/km-kube-agent/crds/crd-otel-instrumentation.yaml
+      ```
+    </Tab>
+  </Tabs>
+</Accordion>
+
+## Next Steps
+
+Now that you have KloudMate Agent running, explore these topics:
+
+<CardGroup cols={2}>
+  <Card title="Platform-Specific Guides" icon="server" href="/installation/overview">
+    Detailed installation guides for each platform
+  </Card>
+  <Card title="Remote Configuration" icon="cloud" href="/configuration/remote-config">
+    Learn how to manage agent configuration remotely
+  </Card>
+  <Card title="Auto-Instrumentation" icon="wand-magic-sparkles" href="/features/auto-instrumentation">
+    Enable automatic instrumentation for your applications
+  </Card>
+  <Card title="OpenTelemetry Components" icon="puzzle-piece" href="/components/overview">
+    Explore the available receivers, processors, and exporters
+  </Card>
+</CardGroup>
+
+## Getting Help
+
+If you encounter issues:
+
+<CardGroup cols={2}>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Common issues and solutions
+  </Card>
+  <Card title="GitHub Issues" icon="github" href="https://github.com/kloudmate/km-agent/issues">
+    Report bugs or request features
+  </Card>
+  <Card title="Documentation" icon="book" href="https://docs.kloudmate.com">
+    Complete KloudMate documentation
+  </Card>
+  <Card title="Email Support" icon="envelope" href="mailto:support@kloudmate.com">
+    Contact the KloudMate team
+  </Card>
+</CardGroup>

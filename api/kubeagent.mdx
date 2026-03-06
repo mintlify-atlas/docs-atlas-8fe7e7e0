@@ -1,0 +1,736 @@
+---
+title: kubeagent
+description: Kubernetes-native KloudMate agent with ConfigMap-based configuration
+icon: dharmachakra
+---
+
+The `kubeagent` is a Kubernetes-native OpenTelemetry collector agent designed to run as pods or daemonsets in Kubernetes clusters. It uses environment variables and ConfigMaps for configuration, with automatic in-cluster authentication.
+
+## Overview
+
+Unlike `kmagent`, the `kubeagent` has no CLI commands or flags. It's designed to run as a Kubernetes workload and reads all configuration from environment variables.
+
+**Key features:**
+- Automatic in-cluster Kubernetes authentication
+- ConfigMap-based collector configuration
+- Support for both Deployment and DaemonSet modes
+- Graceful signal handling (SIGINT, SIGTERM)
+- Structured JSON logging
+
+## Deployment Modes
+
+The agent supports two deployment modes, each with its own configuration file:
+
+<CardGroup cols={2}>
+  <Card title="Deployment" icon="cube">
+    Single instance for cluster-wide metrics and logs. Uses `/etc/kmagent/agent-deployment.yaml`
+  </Card>
+  <Card title="DaemonSet" icon="layer-group">
+    One instance per node for host metrics and node-level telemetry. Uses `/etc/kmagent/agent-daemonset.yaml`
+  </Card>
+</CardGroup>
+
+From `internal/k8sagent/agent.go:160-168`:
+
+```go
+func (c *K8sAgent) otelConfigPath() string {
+	daemonsetURI := "/etc/kmagent/agent-daemonset.yaml"
+	deploymentURI := "/etc/kmagent/agent-deployment.yaml"
+	if c.Cfg.DeploymentMode == "DAEMONSET" {
+		return daemonsetURI
+	} else {
+		return deploymentURI
+	}
+}
+```
+
+## Configuration
+
+All configuration is provided via environment variables. The agent reads environment variables on startup and validates required fields.
+
+### Environment Variables
+
+<ParamField path="KM_API_KEY" type="string" required>
+  API key for authenticating with KloudMate services. Required for remote configuration and telemetry export.
+  
+  **Example:**
+  ```yaml
+  - name: KM_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: kloudmate-secret
+        key: api-key
+  ```
+</ParamField>
+
+<ParamField path="KM_COLLECTOR_ENDPOINT" type="string" required>
+  OpenTelemetry exporter endpoint where telemetry data is sent. Must be a valid HTTP/HTTPS URL.
+  
+  **Example:**
+  ```yaml
+  - name: KM_COLLECTOR_ENDPOINT
+    value: "https://otel.kloudmate.com:4318"
+  ```
+</ParamField>
+
+<ParamField path="CONFIGMAP_NAME" type="string" required>
+  Name of the ConfigMap containing the OpenTelemetry collector configuration.
+  
+  **Example:**
+  ```yaml
+  - name: CONFIGMAP_NAME
+    value: "kmagent-config"
+  ```
+</ParamField>
+
+<ParamField path="POD_NAMESPACE" type="string" required>
+  Namespace where the agent pod is running. Typically injected using the downward API.
+  
+  **Example:**
+  ```yaml
+  - name: POD_NAMESPACE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
+  ```
+</ParamField>
+
+<ParamField path="DEPLOYMENT_MODE" type="string" default="DEPLOYMENT">
+  Deployment mode for the agent. Valid values: `DEPLOYMENT`, `DAEMONSET` (case-insensitive).
+  
+  **Example:**
+  ```yaml
+  - name: DEPLOYMENT_MODE
+    value: "DAEMONSET"
+  ```
+</ParamField>
+
+<ParamField path="KM_CONFIG_CHECK_INTERVAL" type="string">
+  Interval for checking configuration updates. Format depends on implementation.
+  
+  **Example:**
+  ```yaml
+  - name: KM_CONFIG_CHECK_INTERVAL
+    value: "60"
+  ```
+</ParamField>
+
+### Configuration Loading
+
+From `internal/k8sagent/agent.go:125-142`:
+
+```go
+func NewK8sConfig() *K8sConfig {
+	config := &K8sConfig{
+		ConfigCheckInterval: os.Getenv("KM_CONFIG_CHECK_INTERVAL"),
+		APIKey:              os.Getenv("KM_API_KEY"),
+		CollectorEndpoint:   os.Getenv("KM_COLLECTOR_ENDPOINT"),
+		ConfigMapName:       os.Getenv("CONFIGMAP_NAME"),
+		DeploymentMode:      os.Getenv("DEPLOYMENT_MODE"),
+		PodNamespace:        os.Getenv("POD_NAMESPACE"),
+	}
+
+	if strings.ToUpper(config.DeploymentMode) == "DAEMONSET" {
+		config.DeploymentMode = "DAEMONSET"
+	} else {
+		config.DeploymentMode = "DEPLOYMENT"
+
+	}
+	return config
+}
+```
+
+### Validation
+
+The agent validates required configuration on startup:
+
+From `internal/k8sagent/agent.go:144-158`:
+
+```go
+func (c *K8sConfig) Validate() error {
+	if c.APIKey == "" {
+		return fmt.Errorf("KM_API_KEY is required")
+	}
+	if c.CollectorEndpoint == "" {
+		return fmt.Errorf("KM_COLLECTOR_ENDPOINT is required")
+	}
+	if c.ConfigMapName == "" {
+		return fmt.Errorf("CONFIGMAP_NAME is required")
+	}
+	if c.PodNamespace == "" {
+		return fmt.Errorf("POD_NAMESPACE is required")
+	}
+	return nil
+}
+```
+
+## Kubernetes Authentication
+
+The agent automatically uses in-cluster Kubernetes configuration:
+
+From `internal/k8sagent/agent.go:60-69`:
+
+```go
+kubecfg, err := rest.InClusterConfig()
+if err != nil {
+	return nil, fmt.Errorf("failed to load in-cluster config: %w", err)
+}
+logger.Info("loaded in-cluster kubernetes config")
+
+k8sClient, err := kubernetes.NewForConfig(kubecfg)
+if err != nil {
+	return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+}
+```
+
+<Note>
+  The agent must run inside a Kubernetes cluster with appropriate RBAC permissions to read ConfigMaps in its namespace.
+</Note>
+
+## Agent Initialization
+
+The agent initializes with version information and logs startup details:
+
+From `internal/k8sagent/agent.go:49-87`:
+
+```go
+func NewK8sAgent(info *AgentInfo) (*K8sAgent, error) {
+	zapCfg := zap.NewProductionConfig()
+	zapCfg.Level = zap.NewAtomicLevelAt(kmlogger.ParseLogLevel())
+	zapLogger, err := zapCfg.Build()
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize logger: %w", err)
+	}
+	logger := zapLogger.Sugar()
+
+	cfg := NewK8sConfig()
+
+	kubecfg, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load in-cluster config: %w", err)
+	}
+	logger.Info("loaded in-cluster kubernetes config")
+
+	k8sClient, err := kubernetes.NewForConfig(kubecfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+	}
+
+	agent := &K8sAgent{
+		Cfg:       cfg,
+		Logger:    logger,
+		K8sClient: k8sClient,
+		AgentInfo: *info,
+		stopCh:    make(chan struct{}),
+	}
+	agent.AgentInfo.setEnvForAgentVersion()
+	agent.AgentInfo.CollectorVersion = version.GetCollectorVersion()
+
+	logger.Infow("kube agent initialized",
+		"version", info.Version,
+		"commit", info.CommitSHA,
+		"deploymentMode", cfg.DeploymentMode,
+	)
+	return agent, nil
+}
+```
+
+## Signal Handling
+
+The agent handles OS signals for graceful shutdown:
+
+From `cmd/kubeagent/main.go:46-57`:
+
+```go
+// handleSignals sets up a signal handler to gracefully shut down the agent.
+func handleSignals(cancelFunc context.CancelFunc, agent *k8sagent.K8sAgent) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		sig := <-sigChan
+		agent.Logger.Warnf("Received signal %s, initiating shutdown...", sig)
+		cancelFunc()
+		agent.Stop()
+	}()
+}
+```
+
+**Handled signals:**
+- `SIGINT` (Ctrl+C)
+- `SIGTERM` (Kubernetes pod termination)
+
+## Main Loop
+
+The agent's main function is minimal, delegating to the agent implementation:
+
+From `cmd/kubeagent/main.go:18-44`:
+
+```go
+func main() {
+	// Set up the main context for the application
+	appCtx, cancelAppCtx := context.WithCancel(context.Background())
+	defer cancelAppCtx()
+
+	agent, err := k8sagent.NewK8sAgent(&k8sagent.AgentInfo{Version: version, CommitSHA: commit})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Handle OS signals for graceful shutdown.
+	handleSignals(cancelAppCtx, agent)
+
+	if err = agent.StartAgent(appCtx); err != nil {
+		agent.Logger.Errorf("agent could not be started with current config : %s", err.Error())
+	}
+
+	agent.AwaitShutdown()
+
+	defer func() {
+		// Ensure logger is synced before exit to flush buffered logs.
+		if syncErr := agent.Logger.Sync(); syncErr != nil && syncErr.Error() != "sync /dev/stdout: invalid argument" {
+			agent.Logger.Warnf("Failed to sync logger: %v\n", syncErr)
+		}
+	}()
+}
+```
+
+## Deployment Example
+
+### Deployment Mode
+
+Deploy as a single instance for cluster-wide telemetry:
+
+```yaml deployment.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kloudmate-secret
+  namespace: kloudmate
+type: Opaque
+stringData:
+  api-key: "km_xxxxxxxxxxxxx"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kmagent-config
+  namespace: kloudmate
+data:
+  agent-deployment.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    
+    processors:
+      batch:
+        timeout: 10s
+        send_batch_size: 1024
+    
+    exporters:
+      otlphttp:
+        endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+        headers:
+          api-key: ${env:KM_API_KEY}
+    
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlphttp]
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlphttp]
+        logs:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlphttp]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeagent
+  namespace: kloudmate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubeagent
+  template:
+    metadata:
+      labels:
+        app: kubeagent
+    spec:
+      serviceAccountName: kubeagent
+      containers:
+      - name: kubeagent
+        image: kloudmate/kubeagent:latest
+        env:
+        - name: KM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: kloudmate-secret
+              key: api-key
+        - name: KM_COLLECTOR_ENDPOINT
+          value: "https://otel.kloudmate.com:4318"
+        - name: DEPLOYMENT_MODE
+          value: "DEPLOYMENT"
+        - name: CONFIGMAP_NAME
+          value: "kmagent-config"
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: KM_CONFIG_CHECK_INTERVAL
+          value: "60"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/kmagent
+      volumes:
+      - name: config
+        configMap:
+          name: kmagent-config
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubeagent
+  namespace: kloudmate
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kubeagent
+  namespace: kloudmate
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kubeagent
+  namespace: kloudmate
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kubeagent
+subjects:
+- kind: ServiceAccount
+  name: kubeagent
+  namespace: kloudmate
+```
+
+Deploy:
+
+```bash
+kubectl apply -f deployment.yaml
+```
+
+### DaemonSet Mode
+
+Deploy as a DaemonSet for per-node telemetry:
+
+```yaml daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kubeagent
+  namespace: kloudmate
+spec:
+  selector:
+    matchLabels:
+      app: kubeagent
+  template:
+    metadata:
+      labels:
+        app: kubeagent
+    spec:
+      serviceAccountName: kubeagent
+      hostNetwork: true
+      hostPID: true
+      containers:
+      - name: kubeagent
+        image: kloudmate/kubeagent:latest
+        env:
+        - name: KM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: kloudmate-secret
+              key: api-key
+        - name: KM_COLLECTOR_ENDPOINT
+          value: "https://otel.kloudmate.com:4318"
+        - name: DEPLOYMENT_MODE
+          value: "DAEMONSET"
+        - name: CONFIGMAP_NAME
+          value: "kmagent-config"
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        volumeMounts:
+        - name: config
+          mountPath: /etc/kmagent
+        - name: hostfs
+          mountPath: /hostfs
+          readOnly: true
+        securityContext:
+          privileged: true
+      volumes:
+      - name: config
+        configMap:
+          name: kmagent-config
+      - name: hostfs
+        hostPath:
+          path: /
+```
+
+## RBAC Permissions
+
+The agent requires minimal RBAC permissions:
+
+```yaml rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubeagent
+  namespace: kloudmate
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kubeagent
+  namespace: kloudmate
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "watch", "list"]
+  resourceNames: ["kmagent-config"]  # Restrict to specific ConfigMap
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kubeagent
+  namespace: kloudmate
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kubeagent
+subjects:
+- kind: ServiceAccount
+  name: kubeagent
+  namespace: kloudmate
+```
+
+<Note>
+  For cluster-wide monitoring (e.g., Kubernetes metrics receiver), you may need ClusterRole permissions to watch nodes, pods, and other cluster resources.
+</Note>
+
+## Logging
+
+The agent uses structured JSON logging with configurable log levels:
+
+```go
+zapCfg := zap.NewProductionConfig()
+zapCfg.Level = zap.NewAtomicLevelAt(kmlogger.ParseLogLevel())
+```
+
+**Log output:**
+- **Format:** JSON with structured fields
+- **Level:** Configurable via environment variable
+- **Output:** stdout (captured by Kubernetes)
+
+**Example log entry:**
+
+```json
+{
+  "level": "info",
+  "ts": "2024-03-15T10:30:45.123Z",
+  "msg": "kube agent initialized",
+  "version": "0.1.0",
+  "commit": "abc123",
+  "deploymentMode": "DEPLOYMENT"
+}
+```
+
+## Version Information
+
+The agent tracks version information and exposes it for telemetry:
+
+From `cmd/kubeagent/main.go:13-16`:
+
+```go
+var (
+	version = "0.1.0"
+	commit  = "none"
+)
+```
+
+From `internal/k8sagent/agent.go:170-173`:
+
+```go
+// setEnvForAgentVersion sets agent version on env for otel processor
+func (r *AgentInfo) setEnvForAgentVersion() {
+	os.Setenv("KM_AGENT_VERSION", r.Version)
+}
+```
+
+The `KM_AGENT_VERSION` environment variable can be referenced in OpenTelemetry processor configuration to tag telemetry with agent version.
+
+## Graceful Shutdown
+
+The agent implements graceful shutdown:
+
+From `internal/k8sagent/agent.go:108-115`:
+
+```go
+// Stop stops the underlying collector.
+func (a *K8sAgent) Stop() {
+	a.Logger.Info("stopping collector agent")
+	close(a.stopCh)
+	a.wg.Wait()
+	a.stopInternalCollector()
+	a.Logger.Info("collector agent stopped")
+}
+```
+
+**Shutdown sequence:**
+1. Receive signal (SIGINT or SIGTERM)
+2. Cancel application context
+3. Close stop channel to signal goroutines
+4. Wait for all goroutines to complete
+5. Stop internal collector
+6. Sync logger to flush buffered logs
+
+## Troubleshooting
+
+### Check Pod Status
+
+```bash
+kubectl get pods -n kloudmate -l app=kubeagent
+kubectl describe pod -n kloudmate -l app=kubeagent
+```
+
+### View Logs
+
+```bash
+kubectl logs -n kloudmate -l app=kubeagent --tail=100 -f
+```
+
+### Verify Configuration
+
+```bash
+# Check ConfigMap
+kubectl get configmap -n kloudmate kmagent-config -o yaml
+
+# Check Secret
+kubectl get secret -n kloudmate kloudmate-secret -o yaml
+
+# Verify environment variables
+kubectl exec -n kloudmate deployment/kubeagent -- env | grep KM_
+```
+
+### Common Issues
+
+<AccordionGroup>
+  <Accordion title="Failed to load in-cluster config">
+    Ensure the pod is running inside a Kubernetes cluster and has a service account:
+    
+    ```bash
+    kubectl get serviceaccount -n kloudmate kubeagent
+    ```
+  </Accordion>
+  
+  <Accordion title="KM_API_KEY is required">
+    Verify the secret exists and is properly mounted:
+    
+    ```bash
+    kubectl get secret -n kloudmate kloudmate-secret
+    kubectl describe pod -n kloudmate -l app=kubeagent | grep -A 5 Environment
+    ```
+  </Accordion>
+  
+  <Accordion title="CONFIGMAP_NAME is required">
+    Ensure the ConfigMap exists and the CONFIGMAP_NAME environment variable is set:
+    
+    ```bash
+    kubectl get configmap -n kloudmate kmagent-config
+    kubectl exec -n kloudmate deployment/kubeagent -- env | grep CONFIGMAP_NAME
+    ```
+  </Accordion>
+  
+  <Accordion title="Permission denied accessing ConfigMap">
+    Verify RBAC permissions:
+    
+    ```bash
+    kubectl get role -n kloudmate kubeagent -o yaml
+    kubectl get rolebinding -n kloudmate kubeagent -o yaml
+    kubectl auth can-i get configmaps --as=system:serviceaccount:kloudmate:kubeagent -n kloudmate
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Configuration Updates
+
+Update the collector configuration by modifying the ConfigMap:
+
+```bash
+kubectl edit configmap -n kloudmate kmagent-config
+```
+
+The agent will automatically detect changes and reload the configuration based on the `KM_CONFIG_CHECK_INTERVAL` setting.
+
+<Note>
+  Configuration updates may require pod restart depending on the implementation. Check the agent logs for reload behavior.
+</Note>
+
+## Health Checks
+
+Add liveness and readiness probes to your deployment:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 13133
+  initialDelaySeconds: 30
+  periodSeconds: 10
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 13133
+  initialDelaySeconds: 5
+  periodSeconds: 5
+```
+
+<Note>
+  The health check port (13133) is the default OpenTelemetry Collector health extension port. Enable the health_check extension in your collector configuration.
+</Note>
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="CLI Overview" icon="terminal" href="/api/cli-overview">
+    Overview of all CLI tools and common configuration
+  </Card>
+  <Card title="Kubernetes Deployment" icon="dharmachakra" href="/deploy/kubernetes">
+    Deploy kubeagent to Kubernetes clusters
+  </Card>
+  <Card title="Configuration" icon="file" href="/customize/configuration">
+    OpenTelemetry collector configuration reference
+  </Card>
+  <Card title="RBAC Setup" icon="shield" href="/deploy/kubernetes#rbac">
+    Configure Kubernetes RBAC permissions
+  </Card>
+</CardGroup>

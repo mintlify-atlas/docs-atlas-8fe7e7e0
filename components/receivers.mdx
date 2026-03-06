@@ -1,0 +1,465 @@
+---
+title: Receivers
+description: Configure receivers to collect telemetry data from various sources
+---
+
+Receivers are responsible for getting data into the collector. They can be push-based (accepting data sent to them) or pull-based (actively fetching data from sources).
+
+## Core Receivers
+
+### OTLP Receiver
+
+The OTLP receiver accepts telemetry data via the OpenTelemetry Protocol, supporting both gRPC and HTTP protocols.
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+```
+
+**Use Cases**: Receiving metrics, traces, and logs from instrumented applications, other collectors, or OTLP-compatible agents.
+
+**Documentation**: [OTLP Receiver](https://github.com/open-telemetry/opentelemetry-collector/tree/main/receiver/otlpreceiver)
+
+### Host Metrics Receiver
+
+Collects comprehensive system-level metrics from the host machine.
+
+```yaml
+receivers:
+  hostmetrics:
+    collection_interval: 60s
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+      load:
+        cpu_average: true
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      filesystem:
+        metrics:
+          system.filesystem.usage:
+            enabled: true
+          system.filesystem.utilization:
+            enabled: true
+      disk: {}
+      network: {}
+```
+
+**Metrics Collected**: CPU usage, memory utilization, disk I/O, network traffic, filesystem usage, load average
+
+**Documentation**: [Host Metrics Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/hostmetricsreceiver)
+
+## Infrastructure & Container Monitoring
+
+### Docker Stats Receiver
+
+<Note>Linux only</Note>
+
+Collects resource usage metrics from Docker containers.
+
+```yaml
+receivers:
+  docker_stats:
+    endpoint: unix:///var/run/docker.sock
+    collection_interval: 10s
+    timeout: 20s
+```
+
+**Metrics**: Container CPU, memory, network I/O, block I/O statistics
+
+**Documentation**: [Docker Stats Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/dockerstatsreceiver)
+
+## Kubernetes Receivers
+
+### Kubelet Stats Receiver
+
+Collects metrics from the Kubernetes Kubelet API.
+
+```yaml
+receivers:
+  kubeletstats:
+    auth_type: serviceAccount
+    collection_interval: 30s
+    endpoint: ${env:KM_NODE_NAME}:10250
+    insecure_skip_verify: true
+    metric_groups:
+      - volume
+      - node
+      - pod
+      - container
+    metrics:
+      k8s.container.cpu_limit_utilization:
+        enabled: true
+      k8s.container.memory_limit_utilization:
+        enabled: true
+      k8s.pod.cpu_request_utilization:
+        enabled: true
+```
+
+**Metrics**: Pod resource usage, container metrics, volume metrics, node statistics
+
+**Documentation**: [Kubelet Stats Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/kubeletstatsreceiver)
+
+### K8s Cluster Receiver
+
+Collects Kubernetes cluster-level metrics.
+
+| Metric Category | Examples |
+|-----------------|----------|
+| Nodes | Node conditions, allocatable resources, capacity |
+| Pods | Pod phases, container states, restarts |
+| Deployments | Replica counts, available replicas |
+| Services | Service endpoints |
+
+**Documentation**: [K8s Cluster Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/k8sclusterreceiver)
+
+### K8s Objects Receiver
+
+Watches Kubernetes objects and converts them to log entries.
+
+**Documentation**: [K8s Objects Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/k8sobjectsreceiver)
+
+### K8s Events Receiver
+
+Collects Kubernetes cluster events as structured logs.
+
+**Documentation**: [K8s Events Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/k8seventsreceiver)
+
+## Database Receivers
+
+### MySQL Receiver
+
+```yaml
+receivers:
+  mysql:
+    endpoint: localhost:3306
+    username: otel
+    password: ${env:MYSQL_PASSWORD}
+    collection_interval: 60s
+```
+
+**Metrics**: Connections, queries, buffer pool usage, InnoDB metrics, table locks
+
+**Supported Versions**: MySQL 5.7+
+
+**Documentation**: [MySQL Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/mysqlreceiver)
+
+### PostgreSQL Receiver
+
+```yaml
+receivers:
+  postgresql:
+    endpoint: localhost:5432
+    username: otel
+    password: ${env:POSTGRES_PASSWORD}
+    databases:
+      - myapp
+    collection_interval: 60s
+```
+
+**Metrics**: Database size, connections, transactions, tuple operations, index usage
+
+**Supported Versions**: PostgreSQL 9.6+
+
+**Documentation**: [PostgreSQL Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/postgresqlreceiver)
+
+### MongoDB Receiver
+
+**Metrics**: Database operations, connections, memory usage, replication lag
+
+**Supported Versions**: MongoDB 4.0+
+
+**Documentation**: [MongoDB Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/mongodbreceiver)
+
+### MongoDB Atlas Receiver
+
+Collects metrics from MongoDB Atlas cloud service.
+
+**Documentation**: [MongoDB Atlas Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/mongodbatlasreceiver)
+
+### Redis Receiver
+
+**Metrics**: Commands processed, memory usage, keyspace statistics, replication metrics
+
+**Supported Versions**: Redis 5.0+
+
+**Documentation**: [Redis Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/redisreceiver)
+
+### Additional Database Receivers
+
+<CardGroup cols={2}>
+  <Card title="Oracle DB" icon="database">
+    Oracle Database metrics collection
+    
+    [Documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/oracledbreceiver)
+  </Card>
+  
+  <Card title="SQL Server" icon="database">
+    Microsoft SQL Server 2012+ metrics
+    
+    [Documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/sqlserverreceiver)
+  </Card>
+  
+  <Card title="SAP HANA" icon="database">
+    SAP HANA database monitoring
+    
+    [Documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/saphanareceiver)
+  </Card>
+  
+  <Card title="Elasticsearch" icon="magnifying-glass">
+    Elasticsearch cluster metrics (7.x+)
+    
+    [Documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/elasticsearchreceiver)
+  </Card>
+</CardGroup>
+
+## Web Server & Application Receivers
+
+### Apache Receiver
+
+```yaml
+receivers:
+  apache:
+    endpoint: http://localhost:8080/server-status?auto
+    collection_interval: 60s
+```
+
+**Requirements**: Apache mod_status enabled
+
+**Metrics**: Requests, workers, uptime, traffic
+
+**Documentation**: [Apache Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/apachereceiver)
+
+### Nginx Receiver
+
+**Requirements**: Nginx stub_status module enabled
+
+**Metrics**: Active connections, requests, reading/writing/waiting states
+
+**Documentation**: [Nginx Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/nginxreceiver)
+
+### IIS Receiver
+
+<Note>Windows only</Note>
+
+**Metrics**: Requests, connections, bandwidth, application pool statistics
+
+**Supported Versions**: Windows Server 2016+
+
+**Documentation**: [IIS Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/iisreceiver)
+
+### RabbitMQ Receiver
+
+**Metrics**: Queue depth, message rates, connections, channels, exchanges
+
+**Supported Versions**: RabbitMQ 3.8+
+
+**Documentation**: [RabbitMQ Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/rabbitmqreceiver)
+
+### Kafka Metrics Receiver
+
+**Metrics**: Broker metrics, topic metrics, consumer group lag
+
+**Supported Versions**: Kafka 2.0+
+
+**Documentation**: [Kafka Metrics Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/kafkametricsreceiver)
+
+## Log Receivers
+
+### Filelog Receiver
+
+Tails and parses log files with sophisticated multiline and parsing capabilities.
+
+```yaml
+receivers:
+  filelog/containers:
+    include:
+      - /var/log/pods/*/*/*.log
+    exclude:
+      - /**/*.gz
+      - /var/log/pods/km-agent_*/**/*.log
+    operators:
+      - type: container
+      - type: recombine
+        combine_field: body
+        is_first_entry: body matches "^(\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}|\\{)"
+      - type: json_parser
+        parse_from: body
+```
+
+**Features**: Multiline support, JSON parsing, custom operators, timestamp extraction
+
+**Documentation**: [Filelog Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/filelogreceiver)
+
+### Journald Receiver
+
+<Note>Linux only</Note>
+
+Collects logs from the systemd journal.
+
+**Documentation**: [Journald Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/journaldreceiver)
+
+### Syslog Receiver
+
+Receives syslog messages over TCP or UDP.
+
+**Supported Formats**: RFC3164, RFC5424
+
+**Documentation**: [Syslog Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/syslogreceiver)
+
+### Fluent Forward Receiver
+
+Receives logs via Fluentd forward protocol.
+
+**Compatible With**: Fluentd, Fluent Bit
+
+**Documentation**: [Fluent Forward Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/fluentforwardreceiver)
+
+## Cloud Platform Receivers
+
+### AWS CloudWatch Receivers
+
+<CardGroup cols={2}>
+  <Card title="CloudWatch Logs" icon="aws">
+    Collects log streams from AWS CloudWatch Logs
+    
+    [Documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/awscloudwatchreceiver)
+  </Card>
+  
+  <Card title="CloudWatch Metrics" icon="aws">
+    Fetches metrics from AWS CloudWatch
+    
+    [Documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/awscloudwatchmetricsreceiver)
+  </Card>
+  
+  <Card title="Container Insights" icon="aws">
+    ECS/EKS container insights data
+    
+    [Documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/awscontainerinsightreceiver)
+  </Card>
+  
+  <Card title="ECS Container Metrics" icon="aws">
+    Metrics from ECS task metadata endpoint
+    
+    [Documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/awsecscontainermetricsreceiver)
+  </Card>
+</CardGroup>
+
+### Azure Monitor Receiver
+
+Collects metrics from Azure Monitor.
+
+**Documentation**: [Azure Monitor Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/azuremonitorreceiver)
+
+### Google Cloud Monitoring Receiver
+
+Collects metrics from Google Cloud Monitoring (formerly Stackdriver).
+
+**Documentation**: [Google Cloud Monitoring Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/googlecloudmonitoringreceiver)
+
+## Additional Receivers
+
+### Prometheus Receiver
+
+Scrapes Prometheus metrics endpoints.
+
+```yaml
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'myapp'
+          scrape_interval: 30s
+          static_configs:
+            - targets: ['localhost:8080']
+```
+
+**Documentation**: [Prometheus Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusreceiver)
+
+### HTTP Check Receiver
+
+Performs HTTP health checks and generates metrics.
+
+**Use Case**: Synthetic monitoring, endpoint availability
+
+**Documentation**: [HTTP Check Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/httpcheckreceiver)
+
+### SQL Query Receiver
+
+Executes custom SQL queries to generate metrics.
+
+**Use Case**: Custom database metrics, business KPIs from databases
+
+**Documentation**: [SQL Query Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/sqlqueryreceiver)
+
+### Network Receivers
+
+<CardGroup cols={2}>
+  <Card title="Netflow" icon="network-wired">
+    Network flow data collection
+    
+    [Documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/netflowreceiver)
+  </Card>
+  
+  <Card title="SNMP" icon="network-wired">
+    SNMP trap and polling receiver
+    
+    [Documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/snmpreceiver)
+  </Card>
+</CardGroup>
+
+### vCenter Receiver
+
+Collects metrics from VMware vCenter.
+
+**Use Case**: VMware infrastructure monitoring
+
+**Documentation**: [vCenter Receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/vcenterreceiver)
+
+## Receiver Configuration Best Practices
+
+<Steps>
+  <Step title="Set appropriate collection intervals">
+    Balance between data freshness and resource usage. Infrastructure metrics typically use 60s, while application metrics may need 10-30s intervals.
+  </Step>
+  
+  <Step title="Use environment variables for credentials">
+    Never hardcode passwords or API keys in configuration files. Use `${env:VARIABLE_NAME}` syntax.
+  </Step>
+  
+  <Step title="Enable only needed metrics">
+    Many receivers support selective metric enablement to reduce data volume and processing overhead.
+  </Step>
+  
+  <Step title="Configure timeouts appropriately">
+    Set timeouts based on network latency and source responsiveness to avoid blocking the collector.
+  </Step>
+  
+  <Step title="Test configurations incrementally">
+    Add receivers one at a time and verify they work before adding more to simplify troubleshooting.
+  </Step>
+</Steps>
+
+<Warning>
+Some receivers require specific permissions or network access. Ensure the collector has appropriate access to monitored systems before enabling receivers.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configure Processors" icon="gear" href="/components/processors">
+    Learn how to transform and enrich data from receivers
+  </Card>
+  <Card title="Setup Pipelines" icon="diagram-project" href="/configuration/pipelines">
+    Connect receivers to processors and exporters in pipelines
+  </Card>
+</CardGroup>

@@ -1,0 +1,428 @@
+---
+title: Extensions
+description: Add capabilities to the collector with extensions
+---
+
+Extensions provide capabilities that can be added to the collector, but which do not require direct access to telemetry data. They offer supporting functionality like health checks, storage, and diagnostics.
+
+## Health Check Extension
+
+Exposes HTTP endpoints for health and readiness checks, essential for Kubernetes and other orchestration platforms.
+
+```yaml
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+    path: /
+    check_collector_pipeline:
+      enabled: true
+      interval: 5s
+      exporter_failure_threshold: 5
+
+service:
+  extensions: [health_check]
+```
+
+### Configuration Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `endpoint` | HTTP endpoint address | `0.0.0.0:13133` |
+| `path` | Health check URL path | `/` |
+| `check_collector_pipeline.enabled` | Check pipeline health | `false` |
+| `check_collector_pipeline.interval` | Check interval | `5m` |
+| `check_collector_pipeline.exporter_failure_threshold` | Failures before unhealthy | `5` |
+
+### Health Check Endpoints
+
+The extension provides two endpoints:
+
+- `http://localhost:13133/` - Overall health status
+- `http://localhost:13133/ready` - Readiness status
+
+**Response Codes**:
+- `200 OK` - Collector is healthy/ready
+- `503 Service Unavailable` - Collector is unhealthy/not ready
+
+### Kubernetes Integration
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: km-agent
+spec:
+  containers:
+  - name: km-agent
+    image: kloudmate/agent:latest
+    ports:
+    - containerPort: 13133
+      name: health
+    livenessProbe:
+      httpGet:
+        path: /
+        port: 13133
+      initialDelaySeconds: 30
+      periodSeconds: 10
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: 13133
+      initialDelaySeconds: 10
+      periodSeconds: 5
+```
+
+**Use Cases**:
+- Kubernetes liveness probes
+- Kubernetes readiness probes
+- Load balancer health checks
+- Monitoring and alerting
+
+**Documentation**: [Health Check Extension](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/healthcheckextension)
+
+## File Storage Extension
+
+Provides persistent file-based storage for components that need to maintain state across restarts.
+
+```yaml
+extensions:
+  file_storage:
+    directory: /var/lib/otelcol/file_storage
+    timeout: 10s
+    compaction:
+      directory: /var/lib/otelcol/compaction
+      on_start: true
+      on_rebound: true
+      rebound_needed_threshold_mib: 100
+      rebound_trigger_threshold_mib: 10
+
+service:
+  extensions: [file_storage]
+```
+
+### Configuration Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `directory` | Storage directory path | Required |
+| `timeout` | Operation timeout | `1s` |
+| `compaction.on_start` | Compact on startup | `false` |
+| `compaction.on_rebound` | Compact when threshold reached | `false` |
+
+### Using with Exporters
+
+File storage is commonly used with exporters to enable persistent queuing:
+
+```yaml
+extensions:
+  file_storage:
+    directory: /var/lib/otelcol/file_storage
+
+exporters:
+  otlphttp:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    sending_queue:
+      enabled: true
+      storage: file_storage  # Reference the extension
+      queue_size: 10000
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    metrics:
+      receivers: [hostmetrics]
+      processors: [batch]
+      exporters: [otlphttp]
+```
+
+### Persistent Storage Benefits
+
+<CardGroup cols={2}>
+  <Card title="Survive Restarts" icon="rotate">
+    Queued data persists across collector restarts and upgrades
+  </Card>
+  
+  <Card title="Handle Outages" icon="shield">
+    Buffer data during network failures or backend unavailability
+  </Card>
+  
+  <Card title="Prevent Data Loss" icon="lock">
+    Avoid losing telemetry data during temporary issues
+  </Card>
+  
+  <Card title="Smooth Operations" icon="chart-line">
+    Handle traffic spikes and backend slowdowns gracefully
+  </Card>
+</CardGroup>
+
+### Storage Location Recommendations
+
+<Warning>
+Ensure the storage directory has sufficient disk space and is on a persistent volume in containerized environments.
+</Warning>
+
+**Host Deployments**:
+```yaml
+file_storage:
+  directory: /var/lib/otelcol/file_storage
+```
+
+**Kubernetes (with PersistentVolume)**:
+```yaml
+file_storage:
+  directory: /var/lib/otelcol/storage
+```
+
+**Docker**:
+```yaml
+file_storage:
+  directory: /data/otelcol/storage  # Mount a volume here
+```
+
+**Documentation**: [File Storage Extension](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/storage/filestorage)
+
+## Z-Pages Extension
+
+Provides in-process web pages for diagnostics, debugging, and performance analysis.
+
+```yaml
+extensions:
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+service:
+  extensions: [zpages]
+```
+
+### Configuration Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `endpoint` | HTTP endpoint address | `localhost:55679` |
+
+### Available Z-Pages
+
+Access these pages at `http://localhost:55679/debug/`:
+
+| Page | URL | Description |
+|------|-----|-------------|
+| **Service** | `/debug/servicez` | Service status and configuration |
+| **Pipeline** | `/debug/pipelinez` | Pipeline health and metrics |
+| **Extensions** | `/debug/extensionz` | Extension status |
+| **Features** | `/debug/featurez` | Enabled feature gates |
+| **Trace** | `/debug/tracez` | In-process trace sampling |
+
+### Example Use Cases
+
+<Steps>
+  <Step title="Verify collector is running">
+    Check `/debug/servicez` to see service status and component health
+  </Step>
+  
+  <Step title="Monitor pipeline throughput">
+    View `/debug/pipelinez` for real-time metrics on data flow through pipelines
+  </Step>
+  
+  <Step title="Debug trace collection">
+    Use `/debug/tracez` to see recently received traces and identify issues
+  </Step>
+  
+  <Step title="Check configuration">
+    Review loaded configuration and active feature flags
+  </Step>
+</Steps>
+
+### Security Considerations
+
+<Warning>
+Z-Pages expose internal collector state and should not be publicly accessible in production. Use firewall rules or network policies to restrict access.
+</Warning>
+
+**Kubernetes NetworkPolicy Example**:
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: zpages-restricted
+spec:
+  podSelector:
+    matchLabels:
+      app: km-agent
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          role: debug
+    ports:
+    - protocol: TCP
+      port: 55679
+```
+
+**Recommended Setup**:
+- Bind to `127.0.0.1` instead of `0.0.0.0` for local-only access
+- Use kubectl port-forward for remote access: `kubectl port-forward pod/km-agent 55679:55679`
+- Disable in production environments or restrict via network policies
+
+**Documentation**: [Z-Pages Extension](https://github.com/open-telemetry/opentelemetry-collector/tree/main/extension/zpagesextension)
+
+## Memory Limiter Extension
+
+<Note>
+The memory limiter is also available as a processor. The extension version provides global memory limiting across all pipelines.
+</Note>
+
+Monitors and controls memory usage to prevent out-of-memory errors.
+
+```yaml
+extensions:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+service:
+  extensions: [memory_limiter]
+```
+
+**When to Use Extension vs Processor**:
+- **Extension**: Global memory limit for the entire collector
+- **Processor**: Per-pipeline memory limit
+
+**Documentation**: [Memory Limiter Extension](https://github.com/open-telemetry/opentelemetry-collector/tree/main/processor/memorylimiterprocessor)
+
+## Enabling Multiple Extensions
+
+You can enable multiple extensions simultaneously:
+
+```yaml
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  
+  file_storage:
+    directory: /var/lib/otelcol/file_storage
+  
+  zpages:
+    endpoint: 127.0.0.1:55679
+
+service:
+  extensions: [health_check, file_storage, zpages]
+  pipelines:
+    metrics:
+      receivers: [hostmetrics]
+      processors: [batch]
+      exporters: [otlphttp]
+```
+
+## Extension Best Practices
+
+<Steps>
+  <Step title="Always enable health_check in production">
+    Essential for orchestration platforms and load balancers to monitor collector health
+  </Step>
+  
+  <Step title="Use file_storage for reliability">
+    Enable persistent queuing to prevent data loss during outages
+  </Step>
+  
+  <Step title="Restrict zpages access">
+    Only expose diagnostics pages on localhost or via authenticated access
+  </Step>
+  
+  <Step title="Monitor storage usage">
+    Ensure file_storage directory has adequate space and set up disk space alerts
+  </Step>
+  
+  <Step title="Configure appropriate timeouts">
+    Set storage timeouts based on disk I/O performance characteristics
+  </Step>
+</Steps>
+
+## Production Configuration Example
+
+```yaml
+extensions:
+  # Health checks for Kubernetes
+  health_check:
+    endpoint: 0.0.0.0:13133
+    check_collector_pipeline:
+      enabled: true
+      interval: 5s
+      exporter_failure_threshold: 3
+  
+  # Persistent storage for reliability
+  file_storage:
+    directory: /var/lib/otelcol/file_storage
+    timeout: 10s
+    compaction:
+      on_start: true
+      on_rebound: true
+  
+  # Diagnostics (localhost only)
+  zpages:
+    endpoint: 127.0.0.1:55679
+
+exporters:
+  otlphttp:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    headers:
+      Authorization: ${env:KM_API_KEY}
+    sending_queue:
+      enabled: true
+      storage: file_storage
+      queue_size: 10000
+
+service:
+  extensions: [health_check, file_storage, zpages]
+  pipelines:
+    metrics:
+      receivers: [hostmetrics]
+      processors: [batch]
+      exporters: [otlphttp]
+```
+
+## Troubleshooting Extensions
+
+### Health Check Always Returns 503
+
+- Check if `check_collector_pipeline.enabled` is true
+- Verify exporters are successfully sending data
+- Check `exporter_failure_threshold` isn't too low
+- Review collector logs for exporter errors
+
+### File Storage Using Too Much Disk Space
+
+- Enable compaction with `compaction.on_start: true`
+- Lower `compaction.rebound_needed_threshold_mib`
+- Reduce exporter `queue_size`
+- Check if backend is available (data may be queuing indefinitely)
+
+### Z-Pages Not Accessible
+
+- Verify the endpoint binding (use `0.0.0.0` for remote access)
+- Check firewall rules and network policies
+- Ensure the extension is listed in `service.extensions`
+- Verify the collector process is running
+
+## Platform-Specific Extensions
+
+### Cgroup Runtime Extension
+
+<Note>Linux only</Note>
+
+Automatically detects and respects cgroup memory limits in containerized environments.
+
+**Use Case**: Ensure collector respects container memory limits in Kubernetes/Docker
+
+**Documentation**: [Cgroup Runtime Extension](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/extension/cgroupruntimeextension)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Complete Pipeline Guide" icon="diagram-project" href="/configuration/pipelines">
+    Learn how to build complete pipelines with all component types
+  </Card>
+  <Card title="Deployment Guide" icon="rocket" href="/deploy/overview">
+    Deploy the KloudMate Agent with optimal extension configuration
+  </Card>
+</CardGroup>

@@ -1,0 +1,566 @@
+---
+title: Environment Variables
+description: Complete reference of KloudMate Agent environment variables
+---
+
+The KloudMate Agent is configured primarily through environment variables prefixed with `KM_`. This reference documents all available variables organized by category.
+
+## Core Configuration
+
+### Authentication & Connectivity
+
+<ParamField path="KM_API_KEY" type="string" required>
+  **Required.** API key for authenticating with the KloudMate platform.
+  
+  Obtain your API key from the [KloudMate Settings](https://app.kloudmate.com/settings/) page.
+  
+  ```bash
+  export KM_API_KEY="km_1234567890abcdefghijklmnopqrstuv"
+  ```
+  
+  **Used in:**
+  - Authentication header for telemetry export
+  - Configuration update requests
+  - Agent registration
+  
+  **Source reference:** `/home/daytona/workspace/source/cmd/kmagent/main.go:199-203`
+</ParamField>
+
+<ParamField path="KM_COLLECTOR_ENDPOINT" type="string" default="https://otel.kloudmate.com:4318">
+  OTLP/HTTP endpoint where the agent sends telemetry data.
+  
+  ```bash
+  export KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+  ```
+  
+  **Format:** Must be a valid HTTPS URL with port
+  
+  **Regional endpoints:**
+  - US: `https://otel.kloudmate.com:4318`
+  - EU: `https://otel.eu.kloudmate.com:4318`
+  - Custom: Your self-hosted endpoint
+  
+  **Source reference:** `/home/daytona/workspace/source/cmd/kmagent/main.go:191-197`
+</ParamField>
+
+### Configuration Files
+
+<ParamField path="KM_AGENT_CONFIG" type="string" default="auto">
+  Path to the agent configuration file (YAML format).
+  
+  ```bash
+  export KM_AGENT_CONFIG="/path/to/agent-config.yaml"
+  ```
+  
+  **Default paths:**
+  - Linux: `/etc/kmagent/config.yaml`
+  - macOS: `/Library/Application Support/kmagent/config.yaml`
+  - Windows: `%ProgramFiles%\kmagent\config.yaml`
+  - Docker: `/etc/kmagent/config.yaml`
+  
+  **Source reference:** `/home/daytona/workspace/source/cmd/kmagent/main.go:180-184`
+</ParamField>
+
+<ParamField path="KM_COLLECTOR_CONFIG" type="string" default="auto">
+  Path to the OpenTelemetry Collector configuration file (YAML format).
+  
+  ```bash
+  export KM_COLLECTOR_CONFIG="/etc/kmagent/otel-config.yaml"
+  ```
+  
+  This configuration defines the collector's receivers, processors, and exporters.
+  
+  **Source reference:** `/home/daytona/workspace/source/cmd/kmagent/main.go:186-190`
+</ParamField>
+
+## Remote Configuration
+
+<ParamField path="KM_CONFIG_CHECK_INTERVAL" type="integer" default="60">
+  Interval in seconds between configuration update checks.
+  
+  ```bash
+  export KM_CONFIG_CHECK_INTERVAL=60
+  ```
+  
+  **Valid values:**
+  - `0`: Disable remote configuration updates
+  - `10-300`: Recommended range (seconds)
+  - `> 300`: Use for reduced API calls
+  
+  **Source reference:** `/home/daytona/workspace/source/cmd/kmagent/main.go:204-210`
+</ParamField>
+
+<ParamField path="KM_UPDATE_ENDPOINT" type="string" default="auto-derived">
+  API endpoint for fetching configuration updates.
+  
+  ```bash
+  export KM_UPDATE_ENDPOINT="https://api.kloudmate.com/agents/config-check"
+  ```
+  
+  If not set, automatically derived from `KM_COLLECTOR_ENDPOINT`:
+  - Collector: `https://otel.kloudmate.com:4318`
+  - Update: `https://api.kloudmate.com/agents/config-check`
+  
+  **Source reference:** `/home/daytona/workspace/source/cmd/kmagent/main.go:211-217`
+</ParamField>
+
+## Deployment Mode
+
+<ParamField path="KM_DOCKER_MODE" type="boolean" default="false">
+  Enable Docker-specific configuration and receivers.
+  
+  ```bash
+  export KM_DOCKER_MODE=true
+  ```
+  
+  **When enabled:**
+  - Uses `/home/daytona/workspace/source/configs/docker-col-config.yaml`
+  - Enables `docker_stats` receiver
+  - Mounts `/var/run/docker.sock`
+  - Collects container logs from `/var/lib/docker/containers`
+  
+  **Source reference:** `/home/daytona/workspace/source/cmd/kmagent/main.go:218-223`
+</ParamField>
+
+<ParamField path="KM_DOCKER_ENDPOINT" type="string" default="unix:///var/run/docker.sock">
+  Docker daemon socket endpoint.
+  
+  ```bash
+  export KM_DOCKER_ENDPOINT="unix:///var/run/docker.sock"
+  ```
+  
+  **Source reference:** `/home/daytona/workspace/source/cmd/kmagent/main.go:224-229`
+</ParamField>
+
+## Kubernetes Configuration
+
+### Cluster Identification
+
+<ParamField path="KM_CLUSTER_NAME" type="string" required="kubernetes">
+  **Required for Kubernetes.** Name of the Kubernetes cluster.
+  
+  ```bash
+  export KM_CLUSTER_NAME="production-cluster"
+  ```
+  
+  Applied as `k8s.cluster.name` attribute to all telemetry data.
+  
+  **Source reference:** `/home/daytona/workspace/source/configs/daemonset-col-config.yaml:13,22,52,76,84,162,170`
+</ParamField>
+
+<ParamField path="KM_NODE_NAME" type="string" required="kubernetes-daemonset">
+  **Required for DaemonSet.** Name of the Kubernetes node where the agent is running.
+  
+  Typically set automatically via the Downward API:
+  
+  ```yaml
+  env:
+  - name: KM_NODE_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: spec.nodeName
+  ```
+  
+  Used for:
+  - Filtering metrics to specific node
+  - Node-level resource attribution
+  - Kubelet stats collection
+  
+  **Source reference:** `/home/daytona/workspace/source/configs/daemonset-col-config.yaml:84,167,175,514`
+</ParamField>
+
+<ParamField path="KM_NODE_HOST_IP" type="string">
+  Host IP address of the Kubernetes node.
+  
+  ```yaml
+  env:
+  - name: KM_NODE_HOST_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.hostIP
+  ```
+</ParamField>
+
+### Feature Toggles
+
+<ParamField path="KM_LOGS_ENABLED" type="boolean" default="false">
+  Enable log collection from Kubernetes pods.
+  
+  ```bash
+  export KM_LOGS_ENABLED=true
+  ```
+  
+  **When enabled:**
+  - `filelog/containers` receiver activated
+  - Collects logs from `/var/log/pods/*/*/*.log`
+  - Parses JSON and plaintext logs
+  - Extracts trace context
+  
+  **Source reference:** `/home/daytona/workspace/source/internal/updater/k8s_updater.go:88-95`
+</ParamField>
+
+<ParamField path="KM_APM_ENABLED" type="boolean" default="false">
+  Enable automatic application instrumentation for distributed tracing.
+  
+  ```bash
+  export KM_APM_ENABLED=true
+  ```
+  
+  **Supported languages:**
+  - Java
+  - Node.js
+  - Python
+  - .NET
+  
+  **Source reference:** `/home/daytona/workspace/source/internal/updater/k8s_updater.go:98-105`
+</ParamField>
+
+<ParamField path="KM_K8S_MONITORED_NAMESPACES" type="string" default="all">
+  Comma-separated list of Kubernetes namespaces to monitor.
+  
+  ```bash
+  # Monitor specific namespaces
+  export KM_K8S_MONITORED_NAMESPACES="production,staging,default"
+  
+  # Monitor all namespaces (default)
+  export KM_K8S_MONITORED_NAMESPACES=""
+  ```
+  
+  **Source reference:** `/home/daytona/workspace/source/internal/updater/k8s_updater.go:79`
+</ParamField>
+
+### Operator Configuration
+
+<ParamField path="KM_NAMESPACE" type="string" default="km-agent">
+  Namespace where the KloudMate agent is deployed.
+  
+  ```bash
+  export KM_NAMESPACE="km-agent"
+  ```
+  
+  **Source reference:** `/home/daytona/workspace/source/internal/instrumentation/autoinstrument.go:13`
+</ParamField>
+
+<ParamField path="KM_CRD_NAME" type="string" default="km-agent-instrumentation-crd">
+  Name of the Instrumentation CustomResourceDefinition.
+  
+  ```bash
+  export KM_CRD_NAME="km-agent-instrumentation-crd"
+  ```
+  
+  **Source reference:** `/home/daytona/workspace/source/internal/instrumentation/autoinstrument.go:17`
+</ParamField>
+
+<ParamField path="KM_DAEMONSET_NAME" type="string" default="km-agent">
+  Name of the agent DaemonSet.
+  
+  ```bash
+  export KM_DAEMONSET_NAME="km-agent"
+  ```
+</ParamField>
+
+<ParamField path="KM_DEPLOYMENT_NAME" type="string" default="km-agent-cluster">
+  Name of the agent Deployment.
+  
+  ```bash
+  export KM_DEPLOYMENT_NAME="km-agent-cluster"
+  ```
+</ParamField>
+
+### RPC Configuration
+
+<ParamField path="KM_CFG_UPDATER_RPC_ADDR" type="string" default="5501">
+  Port for the configuration updater RPC server.
+  
+  ```bash
+  export KM_CFG_UPDATER_RPC_ADDR=5501
+  ```
+  
+  Used for communication between the config updater and agent pods in Kubernetes.
+  
+  **Source reference:** `/home/daytona/workspace/source/rpc/server.go:24`
+</ParamField>
+
+## Log Filtering
+
+<ParamField path="KM_XLOG_PATHS" type="array" default="[]">
+  Additional log paths to exclude from collection.
+  
+  ```bash
+  export KM_XLOG_PATHS="/var/log/sensitive/*,/var/log/archive/*"
+  ```
+  
+  **In Helm values:**
+  ```yaml
+  KM_XLOG_PATHS:
+    - /var/log/sensitive/*
+    - /var/log/archive/*
+  ```
+  
+  **Source reference:** `/home/daytona/workspace/source/configs/daemonset-col-config.yaml:252`
+</ParamField>
+
+<ParamField path="FILELOG_PATHS" type="string">
+  Additional file log paths to include (Docker mode).
+  
+  ```bash
+  export FILELOG_PATHS="/app/logs/*.log,/custom/logs/**/*.log"
+  ```
+  
+  **Source reference:** `/home/daytona/workspace/source/configs/docker-col-config.yaml:7`
+</ParamField>
+
+## Logging & Debugging
+
+<ParamField path="KM_LOG_LEVEL" type="string" default="info">
+  Agent log level.
+  
+  ```bash
+  export KM_LOG_LEVEL=debug
+  ```
+  
+  **Valid values:**
+  - `trace`: Most verbose, includes all debug messages
+  - `debug`: Detailed debugging information
+  - `info`: General informational messages (default)
+  - `warn`: Warning messages only
+  - `error`: Error messages only
+  - `fatal`: Fatal errors only
+  
+  **Implementation:**
+  ```go
+  func ParseLogLevel() zapcore.Level {
+      switch strings.ToLower(os.Getenv("KM_LOG_LEVEL")) {
+      case "trace", "debug":
+          return zapcore.DebugLevel
+      case "info":
+          return zapcore.InfoLevel
+      case "warn", "warning":
+          return zapcore.WarnLevel
+      case "error":
+          return zapcore.ErrorLevel
+      case "fatal":
+          return zapcore.FatalLevel
+      default:
+          return zapcore.InfoLevel
+      }
+  }
+  ```
+  
+  **Source reference:** `/home/daytona/workspace/source/internal/logger/level.go:10-14`
+</ParamField>
+
+<ParamField path="KM_AGENT_VERSION" type="string" default="auto">
+  Agent version identifier. Automatically set by the agent at startup.
+  
+  ```go
+  os.Setenv("KM_AGENT_VERSION", r.Version)
+  ```
+  
+  Used for:
+  - Version reporting to platform
+  - Update compatibility checks
+  - Troubleshooting and support
+  
+  **Source reference:** `/home/daytona/workspace/source/internal/k8sagent/agent.go:172`
+</ParamField>
+
+## Environment Variable Expansion
+
+All OpenTelemetry Collector configuration files support environment variable expansion using the `${env:VAR_NAME}` syntax:
+
+<CodeGroup>
+```yaml Exporter Configuration
+exporters:
+  otlphttp:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    headers:
+      Authorization: ${env:KM_API_KEY}
+```
+
+```yaml Processor Configuration
+processors:
+  attributes/metrics:
+    actions:
+      - key: k8s.cluster.name
+        value: ${env:KM_CLUSTER_NAME}
+        action: insert
+```
+
+```yaml Receiver Configuration
+receivers:
+  kubeletstats:
+    endpoint: ${env:KM_NODE_NAME}:10250
+    auth_type: serviceAccount
+```
+</CodeGroup>
+
+## Configuration Examples
+
+### Host Deployment (Linux)
+
+```bash
+#!/bin/bash
+# /etc/kmagent/env.sh
+
+export KM_API_KEY="km_your_api_key_here"
+export KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+export KM_CONFIG_CHECK_INTERVAL=60
+export KM_LOG_LEVEL=info
+
+# Start the agent
+source /etc/kmagent/env.sh
+sudo systemctl start kmagent
+```
+
+### Docker Deployment
+
+```bash
+docker run -d \
+  --name kmagent \
+  --restart unless-stopped \
+  -e KM_API_KEY="km_your_api_key_here" \
+  -e KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+  -e KM_DOCKER_MODE=true \
+  -e KM_CONFIG_CHECK_INTERVAL=60 \
+  -e KM_LOG_LEVEL=info \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v /var/log:/var/log:ro \
+  -v /:/hostfs:ro \
+  ghcr.io/kloudmate/km-agent:latest
+```
+
+### Kubernetes Deployment
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: km-agent-secret
+  namespace: km-agent
+type: Opaque
+stringData:
+  api-key: "km_your_api_key_here"
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: km-agent
+  namespace: km-agent
+spec:
+  template:
+    spec:
+      containers:
+      - name: agent
+        image: ghcr.io/kloudmate/km-kube-agent:latest
+        env:
+        - name: KM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: km-agent-secret
+              key: api-key
+        - name: KM_COLLECTOR_ENDPOINT
+          value: "https://otel.kloudmate.com:4318"
+        - name: KM_CONFIG_CHECK_INTERVAL
+          value: "30"
+        - name: KM_CLUSTER_NAME
+          value: "production-cluster"
+        - name: KM_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: KM_NODE_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: KM_LOGS_ENABLED
+          value: "true"
+        - name: KM_APM_ENABLED
+          value: "false"
+```
+
+## Validation
+
+The agent validates required environment variables on startup:
+
+```go
+if cfg.APIKey == "" {
+    return fmt.Errorf("KM_API_KEY is required")
+}
+
+if cfg.CollectorEndpoint == "" {
+    return fmt.Errorf("KM_COLLECTOR_ENDPOINT is required")
+}
+```
+
+**Source reference:** `/home/daytona/workspace/source/internal/k8sagent/agent.go:146-149`
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Missing Required Variables">
+    ```log
+    FATAL failed to load configuration: KM_API_KEY is required
+    ```
+    
+    **Solution:** Set the required environment variable before starting the agent.
+    
+    ```bash
+    export KM_API_KEY="your-api-key"
+    export KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+    kmagent start
+    ```
+  </Accordion>
+
+  <Accordion title="Invalid Endpoint Format">
+    ```log
+    ERROR failed to create exporter: invalid endpoint format
+    ```
+    
+    **Solution:** Ensure the endpoint is a valid HTTPS URL with port.
+    
+    ```bash
+    # Correct
+    export KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+    
+    # Incorrect
+    export KM_COLLECTOR_ENDPOINT="otel.kloudmate.com"  # Missing https:// and port
+    ```
+  </Accordion>
+
+  <Accordion title="Environment Variable Not Expanded">
+    ```log
+    ERROR failed to load config: cannot resolve ${env:KM_API_KEY}
+    ```
+    
+    **Solution:** Verify the environment variable is set in the correct scope.
+    
+    ```bash
+    # Check if variable is set
+    echo $KM_API_KEY
+    
+    # For systemd services
+    sudo systemctl edit kmagent
+    # Add:
+    [Service]
+    Environment="KM_API_KEY=your-key"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration Overview" icon="book" href="/configuration/overview">
+    Learn about the configuration architecture
+  </Card>
+  <Card title="Remote Configuration" icon="cloud-arrow-down" href="/configuration/remote-config">
+    Dynamic configuration updates
+  </Card>
+  <Card title="OpenTelemetry Components" icon="diagram-project" href="/configuration/opentelemetry-components">
+    Configure receivers, processors, and exporters
+  </Card>
+  <Card title="Installation" icon="download" href="/installation/linux">
+    Install the agent on your platform
+  </Card>
+</CardGroup>

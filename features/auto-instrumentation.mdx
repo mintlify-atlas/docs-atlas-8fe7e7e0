@@ -1,0 +1,434 @@
+---
+title: Auto-Instrumentation
+description: Automatically instrument applications with OpenTelemetry without code changes
+icon: wand-magic-sparkles
+---
+
+The KloudMate Agent provides automatic instrumentation capabilities for Kubernetes applications, eliminating the need for manual code changes. Using OpenTelemetry Operator integration and Kubernetes Custom Resource Definitions (CRDs), applications can be instrumented simply by adding annotations to deployments.
+
+## Overview
+
+Auto-instrumentation allows you to collect traces, metrics, and logs from your applications without modifying application code or rebuilding container images. The agent injects OpenTelemetry instrumentation libraries at runtime using init containers and environment variables.
+
+### How It Works
+
+The auto-instrumentation system operates through three key components:
+
+1. **OpenTelemetry Operator**: Watches for annotated pods and injects instrumentation
+2. **Instrumentation CRD**: Defines language-specific instrumentation configuration
+3. **Agent Annotation Helper**: Generates proper annotations for deployment rollouts
+
+<Note>
+Auto-instrumentation is currently available only for Kubernetes deployments. Linux, Docker, and Windows installations require manual instrumentation.
+</Note>
+
+## Supported Languages
+
+The KloudMate Agent supports auto-instrumentation for the following languages:
+
+<CardGroup cols={2}>
+  <Card title="Node.js" icon="node-js">
+    Automatically instruments Node.js applications using the official OpenTelemetry Node.js SDK
+  </Card>
+  <Card title="Java" icon="java">
+    Supports Java applications with the OpenTelemetry Java agent
+  </Card>
+  <Card title="Python" icon="python">
+    Instruments Python applications using OpenTelemetry Python SDK
+  </Card>
+  <Card title=".NET" icon="microsoft">
+    Auto-instruments .NET applications with OpenTelemetry .NET SDK
+  </Card>
+  <Card title="Go" icon="golang">
+    Supports Go applications (requires eBPF-based instrumentation)
+  </Card>
+</CardGroup>
+
+## Installation Prerequisites
+
+Before enabling auto-instrumentation, ensure you have:
+
+<Steps>
+  <Step title="Install the Instrumentation CRD">
+    Apply the OpenTelemetry Instrumentation Custom Resource Definition:
+    
+    ```bash
+    kubectl apply -f https://raw.githubusercontent.com/kloudmate/km-agent/refs/heads/develop/deployment/helm/km-kube-agent/crds/crd-otel-instrumentation.yaml
+    ```
+  </Step>
+  
+  <Step title="Install KloudMate Agent with APM Enabled">
+    Install the agent with the `featuresEnabled.apm` flag set to `true`:
+    
+    ```bash
+    helm install kloudmate-release kloudmate/km-kube-agent \
+      --namespace km-agent \
+      --create-namespace \
+      --set API_KEY="<YOUR_API_KEY>" \
+      --set COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+      --set clusterName="production-cluster" \
+      --set featuresEnabled.apm=true
+    ```
+  </Step>
+  
+  <Step title="Verify Instrumentation CRD">
+    Confirm the Instrumentation CRD resource is created:
+    
+    ```bash
+    kubectl get instrumentation -n km-agent
+    ```
+    
+    You should see output similar to:
+    ```
+    NAME                              AGE       ENDPOINT
+    km-agent-instrumentation-crd      5m        https://otel.kloudmate.com:4318
+    ```
+  </Step>
+</Steps>
+
+## Enabling Auto-Instrumentation
+
+To instrument your application, add the appropriate annotation to your deployment's pod template:
+
+### Language-Specific Annotations
+
+<CodeGroup>
+```yaml Node.js
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-nodejs-app
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-nodejs: "km-agent/km-agent-instrumentation-crd"
+    spec:
+      containers:
+      - name: app
+        image: my-nodejs-app:latest
+```
+
+```yaml Java
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-java-app
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "km-agent/km-agent-instrumentation-crd"
+    spec:
+      containers:
+      - name: app
+        image: my-java-app:latest
+```
+
+```yaml Python
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-python-app
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-python: "km-agent/km-agent-instrumentation-crd"
+    spec:
+      containers:
+      - name: app
+        image: my-python-app:latest
+```
+
+```yaml .NET
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-dotnet-app
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-dotnet: "km-agent/km-agent-instrumentation-crd"
+    spec:
+      containers:
+      - name: app
+        image: my-dotnet-app:latest
+```
+
+```yaml Go
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-go-app
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-go: "km-agent/km-agent-instrumentation-crd"
+    spec:
+      containers:
+      - name: app
+        image: my-go-app:latest
+```
+</CodeGroup>
+
+### Annotation Format
+
+The annotation follows this pattern:
+
+```
+instrumentation.opentelemetry.io/inject-<language>: "<namespace>/<instrumentation-crd-name>"
+```
+
+Where:
+- `<language>`: One of `nodejs`, `java`, `python`, `dotnet`, or `go`
+- `<namespace>`: The namespace where the Instrumentation CRD is installed (default: `km-agent`)
+- `<instrumentation-crd-name>`: Name of the Instrumentation resource (default: `km-agent-instrumentation-crd`)
+
+## Programmatic Annotation Generation
+
+The agent provides a helper function to generate instrumentation annotations programmatically:
+
+<CodeGroup>
+```go Agent Code (autoinstrument.go:12-55)
+package instrumentation
+
+// KmCrdAnnotation generates deployment annotations for auto-instrumentation
+func KmCrdAnnotation(osl string, enabled bool) (InstrumentAnnotiation, map[string]string) {
+	ns := os.Getenv("KM_NAMESPACE")
+	if ns == "" {
+		ns = "km-agent"
+	}
+	crd := os.Getenv("KM_CRD_NAME")
+	if crd == "" {
+		crd = "km-agent-instrumentation-crd"
+	}
+	lang := ""
+	switch osl {
+	case "nodejs":
+		lang = "nodejs"
+	case "Java":
+		lang = "java"
+	case "Python":
+		lang = "python"
+	case "Go":
+		lang = "go"
+	case "dotnet":
+		lang = "dotnet"
+	}
+
+	if ns == "" || lang == "" {
+		return InstrumentAnnotiation{}, nil
+	}
+
+	return InstrumentAnnotiation{
+		"spec": map[string]interface{}{
+			"template": map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"annotations": map[string]interface{}{
+						// Triggers Kubernetes rollout
+						"kubectl.kubernetes.io/restartedAt": time.Now().Format(time.RFC3339),
+						// Instrumentation annotation
+						fmt.Sprintf("instrumentation.opentelemetry.io/inject-%s", lang): 
+							fmt.Sprintf("%s/%s", ns, crd),
+					},
+				},
+			},
+		},
+	}, map[string]string{
+		fmt.Sprintf("instrumentation.opentelemetry.io/inject-%s", lang): 
+			fmt.Sprintf("%s/%s", ns, crd),
+	}
+}
+```
+</CodeGroup>
+
+This function:
+- Accepts a language identifier and enabled flag
+- Reads namespace and CRD name from environment variables
+- Generates proper Kubernetes annotations for deployment patching
+- Includes a `restartedAt` annotation to trigger automatic pod rollout
+
+## Configuration
+
+### Helm Chart Configuration
+
+The auto-instrumentation feature is configured through Helm values:
+
+```yaml values.yaml:14-18,249-261
+featuresEnabled:
+  apm: true  # Enable Application Performance Monitoring
+  logs: false
+  metrics: true
+  traces: true
+
+opentelemetry-operator:
+  enabled: true
+  manager:
+    autoInstrumentationImage:
+      nodejs:
+        repository: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs
+        tag: latest
+      java:
+        repository: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java
+        tag: latest
+      python:
+        repository: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python
+        tag: latest
+      dotnet:
+        repository: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-dotnet
+        tag: latest
+```
+
+### Instrumentation CRD Resource
+
+The Instrumentation CRD defines configuration for all supported languages:
+
+```yaml Example Instrumentation Resource
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: km-agent-instrumentation-crd
+  namespace: km-agent
+spec:
+  exporter:
+    endpoint: https://otel.kloudmate.com:4318
+  env:
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: https://otel.kloudmate.com:4318
+  java:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:latest
+  nodejs:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs:latest
+  python:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:latest
+  dotnet:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-dotnet:latest
+  go:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-go:latest
+```
+
+## Verification
+
+After adding instrumentation annotations:
+
+<Steps>
+  <Step title="Check Pod Injection">
+    Verify that the OpenTelemetry init container was injected:
+    
+    ```bash
+    kubectl describe pod <pod-name> -n <namespace>
+    ```
+    
+    Look for an init container named `opentelemetry-auto-instrumentation`
+  </Step>
+  
+  <Step title="Check Environment Variables">
+    Verify OpenTelemetry environment variables were set:
+    
+    ```bash
+    kubectl exec <pod-name> -n <namespace> -- env | grep OTEL
+    ```
+    
+    Expected output includes:
+    ```
+    OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.kloudmate.com:4318
+    OTEL_SERVICE_NAME=my-app
+    OTEL_RESOURCE_ATTRIBUTES=...
+    ```
+  </Step>
+  
+  <Step title="Verify Telemetry Data">
+    Check that traces are being sent to your KloudMate dashboard
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Pods not being instrumented">
+    **Symptoms**: Annotations are present but no init container is injected
+    
+    **Solutions**:
+    - Verify the OpenTelemetry Operator is running:
+      ```bash
+      kubectl get pods -n km-agent | grep operator
+      ```
+    - Check operator logs:
+      ```bash
+      kubectl logs -n km-agent deployment/km-operator
+      ```
+    - Ensure the Instrumentation CRD exists:
+      ```bash
+      kubectl get instrumentation -n km-agent
+      ```
+  </Accordion>
+  
+  <Accordion title="Application crashes after instrumentation">
+    **Symptoms**: Pods fail to start after adding instrumentation
+    
+    **Solutions**:
+    - Check pod logs for initialization errors
+    - Verify the instrumentation image is compatible with your application version
+    - Check resource limits - instrumentation may require additional memory
+  </Accordion>
+  
+  <Accordion title="No telemetry data received">
+    **Symptoms**: Instrumentation appears successful but no data in dashboard
+    
+    **Solutions**:
+    - Verify the exporter endpoint is correct:
+      ```bash
+      kubectl get instrumentation km-agent-instrumentation-crd -n km-agent -o yaml
+      ```
+    - Check network connectivity from pods to the collector endpoint
+    - Verify API key is correctly configured
+  </Accordion>
+  
+  <Accordion title="Wrong language detected">
+    **Symptoms**: The operator injects the wrong instrumentation library
+    
+    **Solutions**:
+    - Ensure you're using the correct annotation for your language
+    - Check for conflicting annotations on the pod
+    - Verify the language identifier in the annotation matches exactly (case-sensitive)
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Start with Staging" icon="flask">
+    Test auto-instrumentation in non-production environments first to validate overhead and compatibility
+  </Card>
+  
+  <Card title="Monitor Resource Usage" icon="gauge">
+    Auto-instrumentation adds overhead. Monitor CPU and memory usage after enabling instrumentation
+  </Card>
+  
+  <Card title="Use Sampling" icon="filter">
+    Configure sampling rates to reduce data volume in high-traffic applications
+  </Card>
+  
+  <Card title="Version Compatibility" icon="code-compare">
+    Keep instrumentation images updated to ensure compatibility with the latest application frameworks
+  </Card>
+</CardGroup>
+
+<Warning>
+Auto-instrumentation modifies pod specifications at runtime. Always test in non-production environments before enabling in production clusters.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Lifecycle Management" href="/features/lifecycle-management" icon="rotate">
+    Learn how the agent manages collector lifecycle and configuration updates
+  </Card>
+  
+  <Card title="Multi-Platform Support" href="/features/multi-platform-support" icon="server">
+    Explore agent deployment across Linux, Docker, Windows, and Kubernetes
+  </Card>
+</CardGroup>

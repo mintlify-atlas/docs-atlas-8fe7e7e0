@@ -1,0 +1,281 @@
+---
+title: Architecture Overview
+description: Understanding the KloudMate Agent architecture and design principles
+icon: sitemap
+---
+
+## Overview
+
+KloudMate Agent is an OpenTelemetry Collector distribution that extends the upstream collector with automated deployment, remote configuration management, and lifecycle orchestration. The agent architecture separates concerns between **agent management** and **collector execution**, enabling dynamic configuration updates without manual intervention.
+
+<img src="/docs/lifecycle.png" alt="Agent Lifecycle" />
+
+## Core Design Principles
+
+The KloudMate Agent architecture is built on several key principles:
+
+<CardGroup cols={2}>
+  <Card title="Separation of Concerns" icon="layer-group">
+    The Agent manages lifecycle and configuration while the Collector handles telemetry processing
+  </Card>
+  <Card title="Remote Configuration" icon="cloud">
+    Configuration updates are pulled from remote APIs, eliminating the need for SSH access
+  </Card>
+  <Card title="Graceful Lifecycle" icon="rotate">
+    Atomic configuration updates with zero-downtime collector restarts
+  </Card>
+  <Card title="Multi-Platform" icon="server">
+    Unified architecture supports Linux, Docker, Kubernetes, and Windows deployments
+  </Card>
+</CardGroup>
+
+## System Components
+
+The KloudMate Agent consists of several interconnected components:
+
+### Agent Layer
+
+The agent layer is responsible for:
+
+- **Lifecycle Management**: Starting, stopping, and restarting the OpenTelemetry Collector
+- **Configuration Watching**: Periodically checking for configuration updates from remote APIs
+- **State Tracking**: Monitoring agent and collector status for health reporting
+- **Service Integration**: Running as a system service (systemd, Docker, Kubernetes)
+
+```go internal/agent/agent.go
+type Agent struct {
+    cfg            *config.Config
+    logger         *zap.SugaredLogger
+    collector      *otelcol.Collector
+    updater        *updater.ConfigUpdater
+    shutdownSignal chan struct{}
+    wg             sync.WaitGroup
+    collectorMu    sync.Mutex
+    isRunning      atomic.Bool
+    collectorError string
+    version        string
+}
+```
+
+### Collector Layer
+
+The collector layer uses the upstream OpenTelemetry Collector with a curated set of components:
+
+- **Receivers**: Collect telemetry data from various sources (host metrics, logs, traces)
+- **Processors**: Transform, filter, and enrich telemetry data
+- **Exporters**: Send telemetry to backends (OTLP endpoints)
+- **Extensions**: Provide additional functionality (health checks, pprof)
+
+### Configuration Updater
+
+The updater component handles remote configuration synchronization:
+
+- Polls remote API at configurable intervals (default: 60 seconds)
+- Compares local and remote configurations
+- Triggers collector restart when configuration changes
+- Reports agent and collector status to the API
+
+```go internal/updater/updater.go
+type ConfigUpdater struct {
+    cfg        *config.Config
+    logger     *zap.SugaredLogger
+    client     *http.Client
+    configPath string
+}
+```
+
+## Deployment Modes
+
+KloudMate Agent supports multiple deployment modes, each optimized for specific environments:
+
+<Tabs>
+  <Tab title="Host Agent">
+    Runs as a system service on Linux or Windows hosts. Collects host-level metrics, logs, and traces.
+    
+    **Use Cases:**
+    - Bare metal servers
+    - Virtual machines
+    - Traditional infrastructure
+    
+    See [Host Agent Architecture](/architecture/host-agent) for details.
+  </Tab>
+  <Tab title="Docker Agent">
+    Runs as a containerized agent with volume mounts for host metrics and log collection.
+    
+    **Use Cases:**
+    - Docker hosts
+    - Container-based deployments
+    - Hybrid container/host monitoring
+    
+    Uses the same architecture as the host agent with `DockerMode` flag enabled.
+  </Tab>
+  <Tab title="Kubernetes Agent">
+    Runs as both DaemonSet (node-level) and Deployment (cluster-level) in Kubernetes.
+    
+    **Use Cases:**
+    - Kubernetes clusters
+    - Multi-tenant environments
+    - Auto-instrumentation scenarios
+    
+    See [Kubernetes Agent Architecture](/architecture/kubernetes-agent) for details.
+  </Tab>
+</Tabs>
+
+## Communication Flow
+
+<Steps>
+  <Step title="Agent Initialization">
+    The agent starts and loads its configuration from environment variables, config files, or CLI flags.
+    
+    ```go cmd/kmagent/main.go
+    program := &Program{
+        logger:  sugar,
+        cfg:     &config.Config{},
+        wg:      wg,
+        version: version,
+    }
+    ```
+  </Step>
+  
+  <Step title="Collector Startup">
+    The agent creates and starts an OpenTelemetry Collector instance with the current configuration.
+    
+    ```go internal/agent/agent.go
+    collector, err := NewCollector(a.cfg)
+    if err != nil {
+        return fmt.Errorf("failed to create new collector instance: %w", err)
+    }
+    ```
+  </Step>
+  
+  <Step title="Configuration Watching">
+    The agent periodically polls the remote API for configuration updates, sending status information.
+    
+    ```go internal/agent/agent.go
+    ticker := time.NewTicker(time.Duration(a.cfg.ConfigCheckInterval) * time.Second)
+    ```
+  </Step>
+  
+  <Step title="Dynamic Updates">
+    When a configuration change is detected, the agent stops the current collector, updates the config file, and starts a new collector instance.
+    
+    ```go internal/agent/agent.go
+    a.stopCollectorInstance()
+    a.wg.Add(1)
+    go func() {
+        defer a.wg.Done()
+        if err := a.manageCollectorLifecycle(agentCtx); err != nil {
+            a.collectorError = err.Error()
+        }
+    }()
+    ```
+  </Step>
+</Steps>
+
+## State Management
+
+The agent maintains state using atomic operations and mutexes to ensure thread-safe access:
+
+<CodeGroup>
+```go Agent State
+// Atomic boolean for running state
+isRunning atomic.Bool
+
+// Mutex-protected collector reference
+collectorMu sync.Mutex
+collector   *otelcol.Collector
+
+// Error tracking
+collectorError string
+```
+
+```go Status Reporting
+params := updater.UpdateCheckerParams{
+    Version: a.version,
+}
+if a.collector != nil {
+    params.CollectorStatus = "Running"
+} else {
+    params.CollectorStatus = "Stopped"
+    params.CollectorLastError = a.collectorError
+}
+```
+</CodeGroup>
+
+## Configuration Sources
+
+The agent supports multiple configuration sources with a priority hierarchy:
+
+<AccordionGroup>
+  <Accordion title="Environment Variables" icon="terminal">
+    Highest priority. Used for runtime configuration:
+    - `KM_API_KEY`: Authentication key for remote endpoints
+    - `KM_COLLECTOR_ENDPOINT`: OpenTelemetry exporter endpoint
+    - `KM_CONFIG_CHECK_INTERVAL`: Interval for configuration polling
+    - `KM_UPDATE_ENDPOINT`: Remote configuration API endpoint
+  </Accordion>
+  
+  <Accordion title="CLI Flags" icon="flag">
+    Command-line arguments override defaults:
+    - `--config`: Path to collector configuration file
+    - `--api-key`: API key for authentication
+    - `--collector-endpoint`: Exporter endpoint
+    - `--config-check-interval`: Update check interval
+  </Accordion>
+  
+  <Accordion title="Configuration File" icon="file">
+    YAML configuration file (platform-specific paths):
+    - Linux: `/etc/kmagent/config.yaml`
+    - Windows: `<executable-dir>/config.yaml`
+    - Docker: `/etc/kmagent/config.yaml`
+  </Accordion>
+  
+  <Accordion title="Remote API" icon="cloud">
+    Configuration pulled from KloudMate API:
+    - Dynamic updates without restarts
+    - Centralized configuration management
+    - Version-specific configurations
+  </Accordion>
+</AccordionGroup>
+
+## Security Considerations
+
+<Warning>
+The agent communicates with remote APIs for configuration updates. Ensure proper authentication and network security:
+
+- Always use HTTPS endpoints for `KM_COLLECTOR_ENDPOINT` and `KM_UPDATE_ENDPOINT`
+- Protect your `KM_API_KEY` - it's used for authentication
+- Configuration files may contain sensitive data - use appropriate file permissions
+- In Kubernetes, ConfigMaps are managed remotely - avoid manual edits
+</Warning>
+
+## Observability
+
+The agent provides multiple observability mechanisms:
+
+- **Structured Logging**: JSON-formatted logs with configurable levels
+- **Status Reporting**: Agent and collector status sent to remote API
+- **Error Tracking**: Collector errors captured and reported
+- **Health Checks**: Built-in health check extensions in the collector
+
+```go internal/agent/agent.go
+a.logger.Infow("collector configuration updated", 
+    "configPath", a.cfg.OtelConfigPath)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Host Agent" icon="server" href="/architecture/host-agent">
+    Learn about the host agent architecture and lifecycle management
+  </Card>
+  <Card title="Kubernetes Agent" icon="dharmachakra" href="/architecture/kubernetes-agent">
+    Understand the Kubernetes agent deployment model
+  </Card>
+  <Card title="Collector Lifecycle" icon="arrows-rotate" href="/architecture/collector-lifecycle">
+    Deep dive into collector lifecycle and restart mechanisms
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Configure your agent for different scenarios
+  </Card>
+</CardGroup>

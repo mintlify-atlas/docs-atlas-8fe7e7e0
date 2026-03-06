@@ -1,0 +1,467 @@
+---
+title: Exporters
+description: Send telemetry data to backends and observability platforms
+---
+
+Exporters send processed telemetry data to one or more backends or destinations. The KloudMate Agent includes exporters for sending data to KloudMate and other OTLP-compatible platforms.
+
+## OTLP HTTP Exporter
+
+The OTLP HTTP exporter sends telemetry data using the OpenTelemetry Protocol over HTTP. This is the primary exporter for sending data to KloudMate.
+
+```yaml
+exporters:
+  otlphttp:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    headers:
+      Authorization: ${env:KM_API_KEY}
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 10000
+```
+
+### Configuration Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `endpoint` | HTTP endpoint URL | Required |
+| `headers` | Custom HTTP headers (e.g., for authentication) | `{}` |
+| `compression` | Compression algorithm (`gzip`, `none`) | `gzip` |
+| `timeout` | Request timeout | `30s` |
+| `sending_queue.enabled` | Enable persistent queue | `false` |
+| `sending_queue.num_consumers` | Number of parallel consumers | `10` |
+| `sending_queue.queue_size` | Maximum queue size | `1000` |
+| `retry_on_failure.enabled` | Enable retry logic | `true` |
+| `retry_on_failure.initial_interval` | Initial retry delay | `5s` |
+| `retry_on_failure.max_interval` | Maximum retry delay | `30s` |
+| `retry_on_failure.max_elapsed_time` | Maximum total retry time | `5m` |
+
+### Example with All Options
+
+```yaml
+exporters:
+  otlphttp:
+    endpoint: https://ingest.kloudmate.com/v1/metrics
+    headers:
+      Authorization: Bearer ${env:KM_API_KEY}
+      X-Custom-Header: custom-value
+    compression: gzip
+    timeout: 30s
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 10000
+      storage: file_storage
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 5m
+```
+
+### Use Cases
+
+- **KloudMate Platform**: Primary method for sending data to KloudMate
+- **HTTP Proxies**: Works through HTTP proxies unlike gRPC
+- **Firewall Compatibility**: HTTP/HTTPS typically has better firewall compatibility
+- **Load Balancers**: Easier to load balance than gRPC connections
+
+**Documentation**: [OTLP HTTP Exporter](https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlphttpexporter)
+
+## OTLP Exporter (gRPC)
+
+The OTLP gRPC exporter sends telemetry data using gRPC protocol.
+
+```yaml
+exporters:
+  otlp:
+    endpoint: collector.example.com:4317
+    tls:
+      insecure: false
+      ca_file: /etc/ssl/certs/ca.pem
+      cert_file: /etc/ssl/certs/client.pem
+      key_file: /etc/ssl/private/client-key.pem
+    headers:
+      api-key: ${env:API_KEY}
+```
+
+### Configuration Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `endpoint` | gRPC endpoint (host:port) | Required |
+| `tls.insecure` | Skip TLS verification | `false` |
+| `tls.ca_file` | CA certificate file | - |
+| `tls.cert_file` | Client certificate file | - |
+| `tls.key_file` | Client key file | - |
+| `compression` | Compression (`gzip`, `none`) | `gzip` |
+| `keepalive.time` | Keepalive ping interval | `30s` |
+| `keepalive.timeout` | Keepalive timeout | `10s` |
+
+### When to Use gRPC vs HTTP
+
+<CardGroup cols={2}>
+  <Card title="Use OTLP HTTP When" icon="globe">
+    - Sending to KloudMate
+    - Behind HTTP proxies
+    - Firewall restrictions
+    - Simpler deployment
+  </Card>
+  
+  <Card title="Use OTLP gRPC When" icon="bolt">
+    - Maximum performance needed
+    - Low latency requirements
+    - High throughput scenarios
+    - Direct collector-to-collector
+  </Card>
+</CardGroup>
+
+**Documentation**: [OTLP Exporter](https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/otlpexporter)
+
+## Debug Exporter
+
+The debug exporter outputs telemetry data to the console, useful for development and troubleshooting.
+
+```yaml
+exporters:
+  debug:
+    verbosity: detailed
+    sampling_initial: 5
+    sampling_thereafter: 200
+```
+
+### Verbosity Levels
+
+| Level | Description | Output |
+|-------|-------------|--------|
+| `basic` | Minimal output | Data type counts only |
+| `normal` | Standard output | Summary information |
+| `detailed` | Full output | Complete telemetry data |
+
+### Sampling Parameters
+
+- `sampling_initial`: Number of initial items to log
+- `sampling_thereafter`: Log every Nth item after initial sampling
+
+### Example Output
+
+```
+2024-03-06T10:15:30.123Z info MetricsExporter {"#metrics": 42}
+2024-03-06T10:15:30.124Z info LogsExporter {"#logs": 128}
+```
+
+**Use Cases**:
+- Testing receiver configurations
+- Verifying processor transformations
+- Debugging pipeline issues
+- Development and local testing
+
+<Warning>
+Do not use the debug exporter in production as it can produce large amounts of console output and impact performance.
+</Warning>
+
+**Documentation**: [Debug Exporter](https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/debugexporter)
+
+## Nop Exporter
+
+The no-operation exporter silently drops all data without processing or outputting it.
+
+```yaml
+exporters:
+  nop:
+```
+
+**Use Cases**:
+- Testing receiver and processor configurations without sending data
+- Temporary disabling of data export during troubleshooting
+- Performance testing of receiver/processor throughput
+- Development scenarios
+
+**Documentation**: [Nop Exporter](https://github.com/open-telemetry/opentelemetry-collector/tree/main/exporter/nopexporter)
+
+## Multiple Exporters
+
+You can configure multiple exporters in a single pipeline to send data to multiple destinations.
+
+```yaml
+exporters:
+  otlphttp/kloudmate:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    headers:
+      Authorization: ${env:KM_API_KEY}
+  
+  otlphttp/backup:
+    endpoint: ${env:BACKUP_ENDPOINT}
+    headers:
+      Authorization: ${env:BACKUP_API_KEY}
+  
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    metrics:
+      receivers: [hostmetrics]
+      processors: [batch]
+      exporters: [otlphttp/kloudmate, otlphttp/backup, debug]
+```
+
+**Use Cases**:
+- Primary and backup destinations
+- Multi-tenancy (sending to different platforms)
+- Compliance (archiving to long-term storage)
+- Development (debug exporter + production exporter)
+
+<Note>
+Each exporter processes data independently. If one exporter fails, others continue to operate.
+</Note>
+
+## Exporter Queue and Retry Configuration
+
+### Persistent Queue
+
+Enable persistent queuing to prevent data loss during network outages or backend unavailability.
+
+```yaml
+exporters:
+  otlphttp:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 10000
+      storage: file_storage  # Reference to file_storage extension
+
+extensions:
+  file_storage:
+    directory: /var/lib/otelcol/file_storage
+    timeout: 10s
+
+service:
+  extensions: [file_storage]
+```
+
+**Benefits**:
+- Data persists across collector restarts
+- Survives temporary network failures
+- Handles backend downtime gracefully
+
+### Retry Configuration
+
+```yaml
+exporters:
+  otlphttp:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 5m
+```
+
+**Retry Behavior**:
+1. Initial failure triggers retry after `initial_interval`
+2. Subsequent retries use exponential backoff
+3. Backoff capped at `max_interval`
+4. Stops retrying after `max_elapsed_time`
+
+## Authentication Methods
+
+### API Key Authentication
+
+```yaml
+exporters:
+  otlphttp:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    headers:
+      Authorization: Bearer ${env:KM_API_KEY}
+```
+
+### Basic Authentication
+
+```yaml
+exporters:
+  otlphttp:
+    endpoint: ${env:ENDPOINT}
+    headers:
+      Authorization: Basic dXNlcm5hbWU6cGFzc3dvcmQ=  # base64(username:password)
+```
+
+### Custom Headers
+
+```yaml
+exporters:
+  otlphttp:
+    endpoint: ${env:ENDPOINT}
+    headers:
+      X-API-Key: ${env:API_KEY}
+      X-Tenant-ID: ${env:TENANT_ID}
+      X-Environment: production
+```
+
+<Warning>
+Always use environment variables for sensitive data like API keys. Never hardcode credentials in configuration files.
+</Warning>
+
+## TLS Configuration
+
+### Server Certificate Verification
+
+```yaml
+exporters:
+  otlp:
+    endpoint: collector.example.com:4317
+    tls:
+      insecure: false
+      ca_file: /etc/ssl/certs/ca.pem
+```
+
+### Mutual TLS (mTLS)
+
+```yaml
+exporters:
+  otlp:
+    endpoint: collector.example.com:4317
+    tls:
+      ca_file: /etc/ssl/certs/ca.pem
+      cert_file: /etc/ssl/certs/client.pem
+      key_file: /etc/ssl/private/client-key.pem
+```
+
+### Skip Verification (Development Only)
+
+```yaml
+exporters:
+  otlp:
+    endpoint: localhost:4317
+    tls:
+      insecure: true
+```
+
+<Warning>
+Only use `insecure: true` in development environments. Production deployments should always verify TLS certificates.
+</Warning>
+
+## Performance Tuning
+
+### High Throughput Configuration
+
+```yaml
+exporters:
+  otlphttp:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    sending_queue:
+      enabled: true
+      num_consumers: 20        # More parallel senders
+      queue_size: 50000        # Larger queue
+    timeout: 60s               # Longer timeout
+    compression: gzip          # Enable compression
+```
+
+### Low Latency Configuration
+
+```yaml
+exporters:
+  otlp:
+    endpoint: ${env:ENDPOINT}
+    sending_queue:
+      enabled: false           # No queuing
+    compression: none          # Skip compression
+    keepalive:
+      time: 10s                # Frequent keepalives
+      timeout: 5s
+```
+
+### Resource-Constrained Environments
+
+```yaml
+exporters:
+  otlphttp:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    sending_queue:
+      enabled: true
+      num_consumers: 5         # Fewer consumers
+      queue_size: 5000         # Smaller queue
+    timeout: 30s
+```
+
+## Monitoring Exporter Health
+
+Exporters expose metrics that help monitor their health and performance:
+
+| Metric | Description |
+|--------|-------------|
+| `otelcol_exporter_sent_spans` | Number of spans successfully sent |
+| `otelcol_exporter_sent_metric_points` | Number of metric points sent |
+| `otelcol_exporter_sent_log_records` | Number of log records sent |
+| `otelcol_exporter_send_failed_spans` | Number of spans that failed to send |
+| `otelcol_exporter_send_failed_metric_points` | Number of metric points that failed |
+| `otelcol_exporter_queue_size` | Current queue size |
+| `otelcol_exporter_queue_capacity` | Maximum queue capacity |
+
+<Note>
+Enable collector self-monitoring to track exporter metrics and detect issues early.
+</Note>
+
+## Best Practices
+
+<Steps>
+  <Step title="Use environment variables for endpoints and credentials">
+    Keep configuration portable and secure by externalizing sensitive values
+  </Step>
+  
+  <Step title="Enable persistent queues for production">
+    Prevent data loss during network issues or collector restarts
+  </Step>
+  
+  <Step title="Configure appropriate timeouts">
+    Balance between allowing time for slow networks and detecting failures quickly
+  </Step>
+  
+  <Step title="Enable compression">
+    Reduce network bandwidth usage, especially for high-volume deployments
+  </Step>
+  
+  <Step title="Monitor exporter metrics">
+    Track queue sizes, send failures, and latency to detect issues proactively
+  </Step>
+  
+  <Step title="Test failover scenarios">
+    Verify that retry logic and persistent queues work as expected
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Exporter Not Sending Data
+
+1. Check endpoint connectivity: `curl ${KM_COLLECTOR_ENDPOINT}`
+2. Verify authentication headers are correct
+3. Check collector logs for error messages
+4. Enable debug exporter to verify data reaches the pipeline
+
+### High Queue Size
+
+- Backend may be slow or unavailable
+- Increase `num_consumers` for more parallelism
+- Check network latency to backend
+- Verify backend can handle the data volume
+
+### Frequent Timeouts
+
+- Increase `timeout` value
+- Check network latency and stability
+- Reduce batch size in batch processor
+- Verify backend health and capacity
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configure Extensions" icon="puzzle-piece" href="/components/extensions">
+    Add health checks and storage capabilities
+  </Card>
+  <Card title="Pipeline Configuration" icon="diagram-project" href="/configuration/pipelines">
+    Learn how to build complete pipelines
+  </Card>
+</CardGroup>

@@ -1,0 +1,403 @@
+---
+title: Linux Installation
+description: Install the KloudMate Agent on Debian/Ubuntu and RHEL-based Linux systems
+icon: linux
+---
+
+The KloudMate Agent for Linux runs as a systemd service and supports both Debian-based and Red Hat-based distributions with automated installation.
+
+## System Requirements
+
+### Supported Distributions
+
+- **Debian-based**: Debian, Ubuntu
+- **Red Hat-based**: RHEL, CentOS, Rocky Linux, AlmaLinux, Fedora, Amazon Linux, Oracle Linux
+
+### Supported Architectures
+
+- `x86_64` (amd64)
+- `aarch64` (arm64)
+
+### Required Tools
+
+The installation script automatically installs missing dependencies:
+
+- `curl` or `wget`
+- `systemctl` (systemd)
+- `jq` (JSON processor)
+- Package manager: `apt-get`, `dnf`, or `yum`
+
+## Quick Installation
+
+Install the agent with a single command:
+
+```bash
+KM_API_KEY="<YOUR_API_KEY>" KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_linux.sh)"
+```
+
+<Note>
+Replace `<YOUR_API_KEY>` with your actual API key from [KloudMate Settings](https://app.kloudmate.com/settings/).
+</Note>
+
+## Installation Process
+
+<Steps>
+  <Step title="Set Required Environment Variables">
+    The installation requires two mandatory environment variables:
+    
+    ```bash
+    export KM_API_KEY="your-api-key-here"
+    export KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+    ```
+    
+    <Warning>
+    If either `KM_API_KEY` or `KM_COLLECTOR_ENDPOINT` is missing, the installation will fail immediately.
+    </Warning>
+  </Step>
+  
+  <Step title="Download and Execute Installation Script">
+    The script automatically detects your OS and architecture:
+    
+    ```bash
+    bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_linux.sh)"
+    ```
+    
+    The installer will:
+    1. Check and install required tools (`curl`, `wget`, `systemctl`, `jq`)
+    2. Fetch the latest release from GitHub
+    3. Detect your OS type (Debian/RHEL) and architecture
+    4. Download the appropriate package (.deb or .rpm)
+    5. Install the package with dependency resolution
+    6. Enable and start the systemd service
+  </Step>
+  
+  <Step title="Verify Installation">
+    Check that the agent is running:
+    
+    ```bash
+    sudo systemctl status kmagent
+    ```
+    
+    Expected output:
+    ```
+    ● kmagent.service - KloudMate agent for OpenTelemetry
+       Loaded: loaded (/lib/systemd/system/kmagent.service; enabled)
+       Active: active (running) since ...
+    ```
+  </Step>
+</Steps>
+
+## Installation Script Details
+
+### What the Script Does
+
+The installation script (`install_linux.sh`) performs these operations:
+
+```bash install_linux.sh (excerpt)
+# Validates required environment variables
+if [ -z "$KM_API_KEY" ] || [ -z "$KM_COLLECTOR_ENDPOINT" ]; then
+  echo "❌ KM_API_KEY and KM_COLLECTOR_ENDPOINT must be set"
+  exit 1
+fi
+
+# Detects architecture
+ARCH=$(uname -m)
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+  DEB_ARCH="arm64"
+  RPM_ARCH="aarch64"
+else
+  DEB_ARCH="amd64"
+  RPM_ARCH="x86_64"
+fi
+
+# Detects OS and selects package type
+if [ -f /etc/os-release ]; then
+  . /etc/os-release
+  case "$ID" in
+    ubuntu|debian)
+      PKG="deb"
+      INSTALL_CMD="dpkg -i"
+      ;;
+    rhel|centos|rocky|almalinux|fedora|amzn|ol)
+      PKG="rpm"
+      INSTALL_CMD="dnf install -y" # or yum
+      ;;
+  esac
+fi
+```
+
+### Package Installation
+
+For **Debian/Ubuntu**:
+```bash
+sudo dpkg -i /tmp/kmagent.deb
+# If dependencies are missing:
+sudo apt-get install -f -y
+```
+
+For **RHEL/CentOS/Fedora**:
+```bash
+sudo dnf install -y /tmp/kmagent.rpm
+# or
+sudo yum install -y /tmp/kmagent.rpm
+```
+
+## Configuration
+
+### Configuration File Location
+
+The agent configuration is stored at:
+
+```
+/etc/kmagent/agent.yaml
+```
+
+### Generated Configuration
+
+During installation, the postinstall script generates the configuration file:
+
+```yaml /etc/kmagent/agent.yaml
+api-key: "your-api-key"
+collector-endpoint: "https://otel.kloudmate.com:4318"
+```
+
+### Optional Environment Variables
+
+You can customize the installation with additional variables:
+
+| Variable | Description | Default |
+|----------|-------------|----------|
+| `KM_CONFIG_CHECK_INTERVAL` | How often to check for config updates | `30s` |
+| `KM_UPDATE_ENDPOINT` | Remote configuration endpoint | `https://api.kloudmate.com/agents/config-check` |
+| `KM_DOCKER_MODE` | Enable Docker mode | `false` |
+| `KM_DOCKER_ENDPOINT` | Docker socket path | `unix:///var/run/docker.sock` |
+
+Example with optional variables:
+```bash
+KM_API_KEY="key" \
+KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+KM_CONFIG_CHECK_INTERVAL="60s" \
+bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_linux.sh)"
+```
+
+### OpenTelemetry Collector Configuration
+
+The default collector configuration is installed at:
+
+```
+/etc/kmagent/config.yaml
+```
+
+This contains the OpenTelemetry Collector pipeline configuration (receivers, processors, exporters).
+
+## Service Management
+
+### Systemd Service
+
+The agent is managed by systemd at `/lib/systemd/system/kmagent.service`:
+
+```bash
+# Check status
+sudo systemctl status kmagent
+
+# Start the service
+sudo systemctl start kmagent
+
+# Stop the service
+sudo systemctl stop kmagent
+
+# Restart the service
+sudo systemctl restart kmagent
+
+# Enable on boot
+sudo systemctl enable kmagent
+
+# Disable on boot
+sudo systemctl disable kmagent
+```
+
+### View Logs
+
+Check agent logs using journalctl:
+
+```bash
+# View recent logs
+sudo journalctl -u kmagent -n 100
+
+# Follow logs in real-time
+sudo journalctl -u kmagent -f
+
+# View logs for a specific time period
+sudo journalctl -u kmagent --since "1 hour ago"
+```
+
+## Manual Installation
+
+For air-gapped or restricted environments, you can install manually:
+
+<Steps>
+  <Step title="Download Package">
+    Download the appropriate package from [GitHub Releases](https://github.com/kloudmate/km-agent/releases):
+    
+    ```bash
+    # For Debian/Ubuntu (amd64)
+    wget https://github.com/kloudmate/km-agent/releases/download/v1.2.0/kmagent_1.2.0_amd64.deb
+    
+    # For RHEL/CentOS (x86_64)
+    wget https://github.com/kloudmate/km-agent/releases/download/v1.2.0/kmagent_1.2.0.x86_64.rpm
+    ```
+  </Step>
+  
+  <Step title="Set Environment Variables">
+    ```bash
+    export KM_API_KEY="your-api-key"
+    export KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+    ```
+  </Step>
+  
+  <Step title="Install Package">
+    For Debian/Ubuntu:
+    ```bash
+    sudo KM_API_KEY="$KM_API_KEY" KM_COLLECTOR_ENDPOINT="$KM_COLLECTOR_ENDPOINT" dpkg -i kmagent_1.2.0_amd64.deb
+    sudo apt-get install -f -y  # Fix dependencies if needed
+    ```
+    
+    For RHEL/CentOS:
+    ```bash
+    sudo KM_API_KEY="$KM_API_KEY" KM_COLLECTOR_ENDPOINT="$KM_COLLECTOR_ENDPOINT" dnf install -y kmagent_1.2.0.x86_64.rpm
+    ```
+  </Step>
+  
+  <Step title="Enable and Start Service">
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl enable kmagent
+    sudo systemctl start kmagent
+    ```
+  </Step>
+</Steps>
+
+## Uninstallation
+
+### Automated Uninstall
+
+Use the uninstall script:
+
+```bash
+bash -c "$(curl -L https://cdn.kloudmate.com/scripts/uninstall_linux.sh)"
+```
+
+### Manual Uninstall
+
+<Steps>
+  <Step title="Stop and Disable Service">
+    ```bash
+    sudo systemctl stop kmagent
+    sudo systemctl disable kmagent
+    ```
+  </Step>
+  
+  <Step title="Remove Package">
+    For Debian/Ubuntu:
+    ```bash
+    sudo apt-get purge -y kmagent
+    sudo apt-get autoremove -y
+    ```
+    
+    For RHEL/CentOS:
+    ```bash
+    sudo dnf remove -y kmagent
+    # or
+    sudo yum remove -y kmagent
+    ```
+  </Step>
+  
+  <Step title="Clean Up Files">
+    ```bash
+    sudo rm -rf /etc/kmagent/
+    sudo rm -rf /var/log/kmagent/
+    sudo rm -rf /var/lib/kmagent/
+    sudo systemctl daemon-reload
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+Consider clearing your shell history if API keys were entered as plain text:
+```bash
+history -c && exit
+```
+</Warning>
+
+## Troubleshooting
+
+### Installation Fails with "No Package Manager Found"
+
+**Cause**: The system doesn't have apt-get, dnf, or yum.
+
+**Solution**: Install a supported package manager or use manual installation.
+
+### Service Fails to Start
+
+**Check logs**:
+```bash
+sudo journalctl -u kmagent -n 50
+```
+
+**Common causes**:
+- Missing or invalid API key in `/etc/kmagent/agent.yaml`
+- Invalid collector endpoint
+- Network connectivity issues
+- Port conflicts (4317, 4318)
+
+### Configuration File Not Generated
+
+**Cause**: Environment variables not passed to package installer.
+
+**Solution**: Reinstall with environment variables:
+```bash
+sudo KM_API_KEY="key" KM_COLLECTOR_ENDPOINT="endpoint" dpkg -i kmagent.deb
+```
+
+Or manually create `/etc/kmagent/agent.yaml`:
+```yaml
+api-key: "your-api-key"
+collector-endpoint: "https://otel.kloudmate.com:4318"
+```
+
+### Permission Denied Errors
+
+**Solution**: Ensure you're running installation commands with sudo:
+```bash
+sudo systemctl status kmagent
+```
+
+### Architecture Mismatch
+
+**Check your architecture**:
+```bash
+uname -m
+```
+
+Ensure you download the matching package:
+- `x86_64` → `amd64` (Debian) or `x86_64` (RPM)
+- `aarch64` → `arm64` (Debian) or `aarch64` (RPM)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configure Agent" icon="gear" href="/configuration/overview">
+    Customize OpenTelemetry receivers and processors
+  </Card>
+  <Card title="Verify Data Collection" icon="chart-line" href="/getting-started/verify-installation">
+    Confirm telemetry is flowing to KloudMate
+  </Card>
+</CardGroup>
+
+## Support
+
+For installation issues:
+
+- 📧 Email: support@kloudmate.com
+- 🐛 GitHub: [Report an issue](https://github.com/kloudmate/km-agent/issues)
+- 📝 Logs: Check `/var/log/kmagent/` and `journalctl -u kmagent`

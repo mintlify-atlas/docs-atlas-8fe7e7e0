@@ -1,0 +1,484 @@
+---
+title: Processors
+description: Transform, filter, and enrich telemetry data with processors
+---
+
+Processors are optional components that process telemetry data between being received and being exported. They can transform, filter, enrich, sample, or aggregate data.
+
+## Essential Processors
+
+### Batch Processor
+
+Batches telemetry data before sending to exporters to improve compression and reduce network overhead.
+
+```yaml
+processors:
+  batch:
+    send_batch_size: 10000
+    timeout: 10s
+```
+
+**Parameters**:
+- `send_batch_size`: Number of items to batch before sending
+- `timeout`: Maximum time to wait before sending a batch
+
+**Benefits**: Reduced network calls, better compression, improved exporter performance
+
+**Documentation**: [Batch Processor](https://github.com/open-telemetry/opentelemetry-collector/tree/main/processor/batchprocessor)
+
+<Note>
+The batch processor should be included in nearly all pipelines as it significantly improves performance.
+</Note>
+
+### Memory Limiter Processor
+
+Prevents out-of-memory errors by applying backpressure when memory usage exceeds configured limits.
+
+```yaml
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+```
+
+**Parameters**:
+- `limit_mib`: Soft memory limit in MiB
+- `spike_limit_mib`: Maximum spike above limit before applying backpressure
+- `check_interval`: How often to check memory usage
+
+**Documentation**: [Memory Limiter Processor](https://github.com/open-telemetry/opentelemetry-collector/tree/main/processor/memorylimiterprocessor)
+
+<Warning>
+The memory limiter should be the first processor in the pipeline to prevent OOM errors effectively.
+</Warning>
+
+## Resource & Attribute Processors
+
+### Resource Detection Processor
+
+Automatically detects resource information from the environment.
+
+```yaml
+processors:
+  resourcedetection:
+    detectors: [system, env]
+    system:
+      resource_attributes:
+        host.name:
+          enabled: true
+        host.id:
+          enabled: true
+```
+
+**Available Detectors**:
+
+| Detector | Description | Attributes |
+|----------|-------------|------------|
+| `system` | Host information | `host.name`, `host.id`, `os.type` |
+| `env` | Environment variables | Configurable attributes from env vars |
+| `ec2` | AWS EC2 metadata | `cloud.provider`, `cloud.region`, `host.id` |
+| `ecs` | AWS ECS task metadata | `aws.ecs.cluster.arn`, `aws.ecs.task.arn` |
+| `eks` | AWS EKS cluster info | `cloud.provider`, `k8s.cluster.name` |
+| `gcp` | Google Cloud metadata | `cloud.provider`, `cloud.region`, `host.id` |
+| `azure` | Azure VM metadata | `cloud.provider`, `cloud.region`, `host.name` |
+| `docker` | Docker container info | `host.name`, `os.type` |
+
+**Documentation**: [Resource Detection Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/resourcedetectionprocessor)
+
+### Resource Processor
+
+Manually adds, updates, or deletes resource attributes.
+
+```yaml
+processors:
+  resource:
+    attributes:
+      - key: service.name
+        action: insert
+        from_attribute: host.name
+      - key: environment
+        action: insert
+        value: production
+      - key: k8s.cluster.name
+        action: upsert
+        value: ${env:KM_CLUSTER_NAME}
+```
+
+**Actions**:
+- `insert`: Add attribute if it doesn't exist
+- `update`: Modify existing attribute
+- `upsert`: Insert or update attribute
+- `delete`: Remove attribute
+
+**Documentation**: [Resource Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/resourceprocessor)
+
+### Attributes Processor
+
+Modifies attributes on spans, logs, or metrics.
+
+```yaml
+processors:
+  attributes/logs:
+    actions:
+      - key: k8s.cluster.name
+        value: ${env:KM_CLUSTER_NAME}
+        action: insert
+      - key: k8s.namespace.name
+        from_attribute: k8s.namespace.name
+        action: upsert
+      - key: service.namespace
+        from_attribute: k8s.namespace.name
+        action: upsert
+```
+
+**Scope**: Works on data point level attributes, not resource attributes
+
+**Documentation**: [Attributes Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/attributesprocessor)
+
+### K8s Attributes Processor
+
+Enriches telemetry with Kubernetes metadata.
+
+```yaml
+processors:
+  k8sattributes:
+    auth_type: serviceAccount
+    passthrough: false
+    filter:
+      node_from_env_var: KM_NODE_NAME
+    extract:
+      metadata:
+        - k8s.pod.name
+        - k8s.pod.uid
+        - k8s.deployment.name
+        - k8s.namespace.name
+        - k8s.node.name
+        - k8s.pod.start_time
+    pod_association:
+      - sources:
+          - from: resource_attribute
+            name: k8s.pod.uid
+```
+
+**Extracted Metadata**:
+- Pod name, namespace, UID
+- Deployment, StatefulSet, DaemonSet names
+- Node name
+- Container name and image
+- Labels and annotations
+
+**Documentation**: [K8s Attributes Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/k8sattributesprocessor)
+
+### Group By Attributes Processor
+
+Groups telemetry data by specific attributes.
+
+```yaml
+processors:
+  groupbyattrs/filelog:
+    keys:
+      - k8s.pod.uid
+```
+
+**Use Case**: Reorganize data streams based on attribute values for more efficient processing
+
+**Documentation**: [Group By Attrs Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/groupbyattrsprocessor)
+
+## Data Transformation Processors
+
+### Transform Processor
+
+Applies complex transformations using OpenTelemetry Transformation Language (OTTL).
+
+```yaml
+processors:
+  transform/ratecalculation/copymetric:
+    error_mode: ignore
+    metric_statements:
+      - context: metric
+        statements:
+          - copy_metric(name="system.network.io.rate") where metric.name == "system.network.io"
+          - copy_metric(name="system.disk.io.rate") where metric.name == "system.disk.io"
+  
+  transform/ratecalculation/sumtogauge:
+    error_mode: ignore
+    metric_statements:
+      - context: metric
+        statements:
+          - convert_sum_to_gauge() where metric.name == "system.network.io"
+          - convert_sum_to_gauge() where metric.name == "system.disk.io"
+```
+
+**Capabilities**:
+- Copy or rename metrics
+- Convert metric types (sum to gauge, gauge to sum)
+- Set or delete attributes
+- Conditional transformations
+- Extract values from strings
+
+**Documentation**: [Transform Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/transformprocessor)
+
+### Metrics Transform Processor
+
+Renames metrics and performs aggregations.
+
+```yaml
+processors:
+  metricstransform/system:
+    transforms:
+      - action: insert
+        include: system.memory.utilization
+        match_type: strict
+        new_name: system.memory.utilization.consumed
+        operations:
+          - action: aggregate_label_values
+            aggregated_values:
+              - used
+              - cached
+            aggregation_type: sum
+            label: state
+            new_value: consumed
+```
+
+**Operations**:
+- Rename metrics
+- Aggregate label values
+- Update metric types
+- Delete label values
+
+**Documentation**: [Metrics Transform Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/metricstransformprocessor)
+
+### Cumulative To Delta Processor
+
+Converts cumulative sum metrics to delta (rate) metrics.
+
+```yaml
+processors:
+  cumulativetodelta:
+    include:
+      match_type: strict
+      metrics:
+        - system.network.io
+        - system.disk.io
+        - k8s.pod.network.io.rate
+```
+
+**Use Case**: Convert cumulative counters from receivers into rate-based metrics for better visualization
+
+**Documentation**: [Cumulative To Delta Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/cumulativetodeltaprocessor)
+
+### Delta To Rate Processor
+
+Calculates rates from delta metrics.
+
+```yaml
+processors:
+  deltatorate:
+    metrics:
+      - system.network.io
+      - system.disk.io
+      - k8s.node.network.io.rate
+```
+
+**Use Case**: Convert delta values to per-second rates
+
+**Documentation**: [Delta To Rate Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/deltatorate)
+
+## Filtering & Sampling Processors
+
+### Filter Processor
+
+Drops or includes telemetry based on conditions.
+
+```yaml
+processors:
+  filter/drop_health_checks:
+    metrics:
+      exclude:
+        match_type: regexp
+        metric_names:
+          - .*health.*
+    logs:
+      exclude:
+        match_type: strict
+        bodies:
+          - "GET /health"
+```
+
+**Use Cases**:
+- Remove noisy metrics or logs
+- Filter out health check endpoints
+- Drop specific namespaces or services
+- Include only specific metric names
+
+**Documentation**: [Filter Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/filterprocessor)
+
+### Probabilistic Sampler Processor
+
+Samples traces based on probability.
+
+```yaml
+processors:
+  probabilistic_sampler:
+    sampling_percentage: 10.0
+    hash_seed: 22
+```
+
+**Use Case**: Reduce trace volume while maintaining statistical representation
+
+**Documentation**: [Probabilistic Sampler Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/probabilisticsamplerprocessor)
+
+### Redaction Processor
+
+Removes sensitive information from telemetry.
+
+```yaml
+processors:
+  redaction:
+    allow_all_keys: false
+    allowed_keys:
+      - http.method
+      - http.status_code
+    blocked_values:
+      - "4[0-9]{12}(?:[0-9]{3})?"  # Credit card numbers
+      - "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"  # Email addresses
+```
+
+**Use Case**: Remove PII, passwords, API keys, and other sensitive data
+
+**Documentation**: [Redaction Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/redactionprocessor)
+
+## Span & Trace Processors
+
+### Span Processor
+
+Modifies span names and attributes.
+
+**Use Cases**:
+- Rename spans
+- Extract attributes from span names
+- Standardize span attributes
+
+**Documentation**: [Span Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/spanprocessor)
+
+### Group By Trace Processor
+
+Groups spans by trace ID for complete trace processing.
+
+**Use Case**: Ensure all spans of a trace are processed together for accurate trace-level operations
+
+**Documentation**: [Group By Trace Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/groupbytraceprocessor)
+
+## Advanced Processors
+
+### Isolation Forest Processor
+
+Detects anomalies in metric data using machine learning.
+
+**Use Case**: Automatic anomaly detection for monitoring and alerting
+
+**Documentation**: [Isolation Forest Processor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/isolationforestprocessor)
+
+## Processor Pipeline Example
+
+Here's a complete example showing proper processor ordering:
+
+```yaml
+processors:
+  # 1. Memory limiter first to prevent OOM
+  memory_limiter:
+    limit_mib: 512
+  
+  # 2. Resource detection to enrich with environment info
+  resourcedetection:
+    detectors: [system, env]
+  
+  # 3. Add custom resource attributes
+  resource:
+    attributes:
+      - key: k8s.cluster.name
+        value: ${env:KM_CLUSTER_NAME}
+        action: upsert
+  
+  # 4. K8s enrichment (if applicable)
+  k8sattributes:
+    extract:
+      metadata:
+        - k8s.pod.name
+        - k8s.namespace.name
+  
+  # 5. Transform data
+  transform/ratecalculation:
+    metric_statements:
+      - context: metric
+        statements:
+          - convert_sum_to_gauge() where metric.name == "system.network.io"
+  
+  # 6. Filter unwanted data
+  filter:
+    metrics:
+      exclude:
+        match_type: regexp
+        metric_names:
+          - .*test.*
+  
+  # 7. Batch last for efficiency
+  batch:
+    send_batch_size: 10000
+    timeout: 10s
+
+service:
+  pipelines:
+    metrics:
+      receivers: [hostmetrics]
+      processors: [memory_limiter, resourcedetection, resource, k8sattributes, transform/ratecalculation, filter, batch]
+      exporters: [otlphttp]
+```
+
+## Processor Ordering Best Practices
+
+<Steps>
+  <Step title="Start with memory_limiter">
+    Place the memory limiter first to prevent OOM errors regardless of data volume
+  </Step>
+  
+  <Step title="Enrich before transforming">
+    Add resource detection and attributes processors early so transformations have access to all context
+  </Step>
+  
+  <Step title="Transform before filtering">
+    Apply transformations before filters so you can filter on transformed values
+  </Step>
+  
+  <Step title="Filter before batching">
+    Remove unwanted data before batching to reduce processing and export overhead
+  </Step>
+  
+  <Step title="End with batch">
+    The batch processor should be last (or second-to-last before another batch-like processor)
+  </Step>
+</Steps>
+
+<Warning>
+Processor order matters significantly. Incorrect ordering can result in missing data enrichment, failed transformations, or performance issues.
+</Warning>
+
+## Performance Considerations
+
+- **Minimize processor count**: Each processor adds latency; use only what you need
+- **Use specific filters**: Regexp matching is slower than strict matching
+- **Batch appropriately**: Larger batches improve throughput but increase latency and memory usage
+- **Test transformations**: Complex OTTL statements can be CPU-intensive
+- **Monitor processor metrics**: Track dropped data, processing time, and queue sizes
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configure Exporters" icon="upload" href="/components/exporters">
+    Send processed data to backends
+  </Card>
+  <Card title="OTTL Reference" icon="code" href="https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/pkg/ottl">
+    Learn the transformation language syntax
+  </Card>
+</CardGroup>

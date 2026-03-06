@@ -1,0 +1,663 @@
+---
+title: 'Troubleshooting'
+description: 'Diagnose and resolve common KloudMate Agent issues'
+icon: 'wrench'
+---
+
+This guide helps you diagnose and resolve common issues with the KloudMate Agent across all supported platforms.
+
+## Quick Diagnostics
+
+<CardGroup cols={3}>
+  <Card title="Check Status" icon="heartbeat">
+    Verify the agent is running
+  </Card>
+  
+  <Card title="Review Logs" icon="file-lines">
+    Examine recent log entries
+  </Card>
+  
+  <Card title="Test Connectivity" icon="network-wired">
+    Verify network access to endpoints
+  </Card>
+</CardGroup>
+
+## Installation Issues
+
+### Linux: Package Installation Fails
+
+<AccordionGroup>
+  <Accordion title="Missing Dependencies">
+    If `dpkg` or `rpm` reports missing dependencies:
+
+    **Debian/Ubuntu:**
+    ```bash scripts/install_linux.sh
+    sudo apt-get install -f -y
+    ```
+
+    **RHEL/CentOS:**
+    ```bash scripts/install_linux.sh
+    sudo dnf install -y kmagent
+    # or
+    sudo yum install -y kmagent
+    ```
+
+    The installation script handles this automatically:
+    ```bash scripts/install_linux.sh
+    if ! sudo KM_API_KEY="$KM_API_KEY" KM_COLLECTOR_ENDPOINT="$KM_COLLECTOR_ENDPOINT" dpkg -i "$TMP_PACKAGE"; then
+      echo "⚠️  Fixing dependencies with apt-get..."
+      sudo apt-get install -f -y
+    fi
+    ```
+  </Accordion>
+
+  <Accordion title="API Key or Endpoint Not Set">
+    The installation requires both `KM_API_KEY` and `KM_COLLECTOR_ENDPOINT`:
+
+    ```bash scripts/install_linux.sh
+    if [ -z "$KM_API_KEY" ] || [ -z "$KM_COLLECTOR_ENDPOINT" ]; then
+      echo "❌ KM_API_KEY and KM_COLLECTOR_ENDPOINT must be set as environment variables"
+      exit 1
+    fi
+    ```
+
+    **Solution:**
+    ```bash
+    export KM_API_KEY="your-api-key"
+    export KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+    bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_linux.sh)"
+    ```
+  </Accordion>
+
+  <Accordion title="Unable to Fetch Latest Release">
+    If GitHub API is unreachable:
+
+    ```bash
+    ❌ Error: Could not fetch latest release information from GitHub.
+    ```
+
+    **Causes:**
+    - Network connectivity issues
+    - GitHub API rate limiting
+    - Firewall blocking GitHub access
+
+    **Solution:**
+    ```bash
+    # Test GitHub connectivity
+    curl -s https://api.github.com/repos/kloudmate/km-agent/releases/latest
+
+    # If rate limited, wait and retry
+    # Or manually download the package from releases page
+    wget https://github.com/kloudmate/km-agent/releases/download/v1.0.0/kmagent_1.0.0_amd64.deb
+    sudo dpkg -i kmagent_1.0.0_amd64.deb
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Docker: Container Fails to Start
+
+<AccordionGroup>
+  <Accordion title="Docker Not Installed">
+    ```bash scripts/install_docker.sh
+    if ! command -v docker &> /dev/null || ! docker --version &> /dev/null; then
+      echo -e "\nDocker is not installed on the system"
+      echo -e "\nPlease install docker first: https://docs.docker.com/engine/install/\n"
+      exit 1
+    fi
+    ```
+
+    **Solution:** Install Docker first
+    ```bash
+    # Ubuntu/Debian
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sudo sh get-docker.sh
+
+    # Verify installation
+    docker --version
+    ```
+  </Accordion>
+
+  <Accordion title="Permission Denied">
+    If you see "permission denied while trying to connect to Docker daemon":
+
+    **Solution:**
+    ```bash
+    # Add user to docker group
+    sudo usermod -aG docker $USER
+
+    # Log out and back in, or run:
+    newgrp docker
+
+    # Verify
+    docker ps
+    ```
+  </Accordion>
+
+  <Accordion title="Port Already in Use">
+    The agent uses host networking mode and may conflict with existing services.
+
+    **Check for conflicts:**
+    ```bash
+    # Check if port 13133 is in use
+    sudo netstat -tlnp | grep 13133
+
+    # Stop conflicting container
+    docker stop km-agent
+    docker rm km-agent
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Kubernetes: Pods Not Starting
+
+<AccordionGroup>
+  <Accordion title="ImagePullBackOff">
+    If pods are stuck in `ImagePullBackOff`:
+
+    ```bash
+    kubectl describe pod -n km-agent <pod-name>
+    ```
+
+    **Common causes:**
+    - Network issues pulling from ghcr.io
+    - Image tag doesn't exist
+    - Authentication required
+
+    **Solution:**
+    ```bash
+    # Verify image exists
+    docker pull ghcr.io/kloudmate/km-kube-agent:latest
+
+    # Check pod events
+    kubectl get events -n km-agent --sort-by='.lastTimestamp'
+
+    # Force image pull
+    kubectl rollout restart daemonset/km-agent -n km-agent
+    ```
+  </Accordion>
+
+  <Accordion title="CrashLoopBackOff">
+    If pods continuously restart:
+
+    **Check logs:**
+    ```bash
+    kubectl logs -n km-agent <pod-name> --previous
+    ```
+
+    **Common issues:**
+    - Missing API_KEY configuration
+    - Invalid collector endpoint
+    - Resource limits too low
+
+    **Solution:**
+    ```bash
+    # Verify Helm values
+    helm get values kloudmate-release -n km-agent
+
+    # Check for missing values
+    kubectl get configmap -n km-agent km-agent-configmap-daemonset -o yaml
+
+    # Update configuration
+    helm upgrade kloudmate-release kloudmate/km-kube-agent -n km-agent \
+      --set API_KEY="your-api-key" \
+      --set COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+    ```
+  </Accordion>
+
+  <Accordion title="CRD Installation Issues">
+    If you see errors about `Instrumentation` CRD not found:
+
+    **Solution:**
+    ```bash README.md
+    # Install CRD first
+    kubectl apply -f https://raw.githubusercontent.com/kloudmate/km-agent/refs/heads/develop/deployment/helm/km-kube-agent/crds/crd-otel-instrumentation.yaml
+
+    # Then install the agent
+    helm install kloudmate-release kloudmate/km-kube-agent --namespace km-agent --create-namespace
+    ```
+  </Accordion>
+
+  <Accordion title="GKE Private Cluster Webhook Issues">
+    For private GKE clusters, webhook communication may fail:
+
+    ```bash README.md
+    # Add firewall rule for port 9443
+    gcloud compute firewall-rules create allow-webhook \
+      --allow tcp:9443 \
+      --source-ranges <master-cidr> \
+      --target-tags <node-tag>
+    ```
+
+    See [GKE documentation](https://cloud.google.com/kubernetes-engine/docs/how-to/private-clusters#add_firewall_rules) for details.
+  </Accordion>
+
+  <Accordion title="Pods Not Scheduled on Tainted Nodes">
+    If DaemonSet pods aren't running on all nodes:
+
+    **Check node taints:**
+    ```bash
+    kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
+    ```
+
+    **Add tolerations:**
+    ```bash README.md
+    helm install kloudmate-release kloudmate/km-kube-agent --namespace km-agent --create-namespace \
+      --set tolerations[0].key="env" \
+      --set tolerations[0].operator="Equal" \
+      --set tolerations[0].value="production" \
+      --set tolerations[0].effect="NoSchedule"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Runtime Issues
+
+### Agent Not Starting
+
+<Steps>
+  <Step title="Check Service Status">
+    **Linux:**
+    ```bash
+    sudo systemctl status kmagent
+    sudo journalctl -u kmagent -n 50
+    ```
+
+    **Docker:**
+    ```bash
+    docker ps -a -f name=km-agent
+    docker logs km-agent --tail 50
+    ```
+
+    **Kubernetes:**
+    ```bash
+    kubectl get pods -n km-agent
+    kubectl logs -n km-agent <pod-name> --tail 50
+    ```
+  </Step>
+
+  <Step title="Verify Configuration">
+    Check that required configuration is present:
+    ```bash
+    # Linux
+    cat /etc/kmagent/config.yaml
+
+    # Docker
+    docker inspect km-agent | grep -A 10 Env
+
+    # Kubernetes
+    kubectl describe configmap -n km-agent km-agent-configmap-daemonset
+    ```
+  </Step>
+
+  <Step title="Check File Permissions">
+    **Linux only:**
+    ```bash
+    # Binary should be executable
+    ls -la /usr/bin/kmagent
+
+    # Config should be readable
+    ls -la /etc/kmagent/config.yaml
+    ```
+  </Step>
+</Steps>
+
+### Collector Continuously Restarting
+
+The agent manages the collector lifecycle and will restart it if configuration changes or errors occur.
+
+```go internal/agent/agent.go
+runErr := collector.Run(ctx)
+if runErr != nil {
+    a.collectorError = runErr.Error()
+    a.logger.Errorw("collector run loop exited with error", "error", runErr)
+} else {
+    a.collectorError = ""
+    a.logger.Info("collector run loop exited normally")
+}
+```
+
+**Diagnose:**
+
+<CodeGroup>
+
+```bash Linux
+sudo journalctl -u kmagent | grep "collector run loop exited with error"
+```
+
+```bash Docker
+docker logs km-agent 2>&1 | grep "collector run loop exited with error"
+```
+
+```bash Kubernetes
+kubectl logs -n km-agent <pod-name> | grep "collector run loop exited with error"
+```
+
+</CodeGroup>
+
+**Common causes:**
+- Invalid collector configuration
+- Port conflicts
+- Permission issues accessing resources
+- Invalid receiver configurations
+
+### Configuration Updates Not Applied
+
+The agent checks for configuration updates periodically:
+
+```go internal/agent/agent.go
+if a.cfg.ConfigCheckInterval <= 0 {
+    a.logger.Debug("config check interval not set, skipping update checks")
+    return
+}
+```
+
+<Warning>
+If `ConfigCheckInterval` is 0 or negative, configuration updates are **disabled**.
+</Warning>
+
+**Verify update settings:**
+
+<CodeGroup>
+
+```bash Linux
+# Check environment or config file
+grep -i config_check /etc/kmagent/config.yaml
+```
+
+```bash Docker
+docker inspect km-agent | grep KM_CONFIG_CHECK_INTERVAL
+```
+
+```bash Kubernetes
+kubectl get configmap -n km-agent km-agent-configmap-daemonset -o yaml | grep KM_CONFIG_CHECK_INTERVAL
+```
+
+</CodeGroup>
+
+**Monitor update checks:**
+```bash
+# Look for these log messages
+grep "config update checker started" /var/log/syslog
+grep "checking for configuration updates" /var/log/syslog
+grep "configuration changed, restarting collector" /var/log/syslog
+```
+
+## Connectivity Issues
+
+### Cannot Reach Collector Endpoint
+
+<Steps>
+  <Step title="Test Network Connectivity">
+    ```bash
+    # Test HTTPS connectivity
+    curl -v https://otel.kloudmate.com:4318
+
+    # Test with API key
+    curl -v -H "Authorization: your-api-key" https://otel.kloudmate.com:4318
+    ```
+  </Step>
+
+  <Step title="Check Firewall Rules">
+    Ensure outbound HTTPS (443) and port 4318 are allowed:
+    ```bash
+    # Check iptables (Linux)
+    sudo iptables -L OUTPUT -v -n
+
+    # Check firewalld (RHEL/CentOS)
+    sudo firewall-cmd --list-all
+    ```
+  </Step>
+
+  <Step title="Verify DNS Resolution">
+    ```bash
+    nslookup otel.kloudmate.com
+    dig otel.kloudmate.com
+    ```
+  </Step>
+
+  <Step title="Check Proxy Settings">
+    If behind a proxy:
+    ```bash
+    export HTTPS_PROXY=http://proxy.example.com:8080
+    export NO_PROXY=localhost,127.0.0.1
+    ```
+  </Step>
+</Steps>
+
+### Configuration Update API Unreachable
+
+The agent reports status to the update endpoint:
+
+```go internal/updater/updater.go
+req, err := http.NewRequestWithContext(reqCtx, "POST", u.cfg.ConfigUpdateURL, bytes.NewBuffer(jsonData))
+```
+
+**Test connectivity:**
+```bash
+curl -X POST https://api.kloudmate.com/agents/config-check \
+  -H "Authorization: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"hostname":"test","platform":"linux"}'
+```
+
+**Check for errors:**
+```log
+ERROR failed to fetch config updates after retries
+ERROR config update API returned non-OK status: 401
+ERROR Periodic config check failed
+```
+
+## Performance Issues
+
+### High CPU Usage
+
+<AccordionGroup>
+  <Accordion title="Too Many Metrics/Logs">
+    Reduce collection scope or increase batch processing:
+
+    ```yaml
+    processors:
+      batch:
+        send_batch_size: 10000
+        timeout: 10s
+    ```
+  </Accordion>
+
+  <Accordion title="Increase Resource Limits (Kubernetes)">
+    ```bash
+    helm upgrade kloudmate-release kloudmate/km-kube-agent -n km-agent \
+      --set resources.limits.cpu=1000m \
+      --set resources.limits.memory=1Gi
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### High Memory Usage
+
+**Check current usage:**
+
+<CodeGroup>
+
+```bash Docker
+docker stats km-agent --no-stream
+```
+
+```bash Kubernetes
+kubectl top pod -n km-agent
+```
+
+```bash Linux
+sudo systemctl status kmagent
+# Look at Memory field
+```
+
+</CodeGroup>
+
+**Possible causes:**
+- Large batch sizes
+- Too many receivers enabled
+- Memory leaks (upgrade to latest version)
+
+## Data Collection Issues
+
+### No Metrics/Logs Appearing
+
+<Steps>
+  <Step title="Verify Receivers Are Enabled">
+    Check collector configuration:
+    ```yaml
+    receivers:
+      hostmetrics:
+        collection_interval: 30s
+        scrapers:
+          cpu:
+          memory:
+          disk:
+    
+    service:
+      pipelines:
+        metrics:
+          receivers: [hostmetrics]
+    ```
+  </Step>
+
+  <Step title="Check Pipeline Configuration">
+    Ensure receivers are included in service pipelines:
+    ```bash
+    # Linux
+    grep -A 20 "service:" /etc/kmagent/config.yaml
+    ```
+  </Step>
+
+  <Step title="Verify Exporter Configuration">
+    ```yaml
+    exporters:
+      otlphttp:
+        endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+        headers:
+          Authorization: ${env:KM_API_KEY}
+    ```
+  </Step>
+
+  <Step title="Test Data Export">
+    Check collector logs for export errors:
+    ```bash
+    grep -i "export" /var/log/kmagent.log
+    grep -i "error" /var/log/kmagent.log
+    ```
+  </Step>
+</Steps>
+
+### Kubernetes Metrics Missing
+
+For Kubernetes deployments, ensure both DaemonSet and Deployment are running:
+
+```bash
+kubectl get pods -n km-agent -o wide
+```
+
+The **DaemonSet** collects node-level metrics, while the **Deployment** collects cluster-level metrics.
+
+## Uninstallation Issues
+
+### Files Remain After Uninstall
+
+The uninstall script cleans up residual files:
+
+```bash scripts/uninstall_linux.sh
+sudo rm -f /usr/local/bin/kmagent
+sudo rm -f /usr/bin/kmagent
+sudo rm -rf /etc/kmagent/
+sudo rm -rf /var/log/kmagent/
+sudo rm -rf /var/lib/kmagent/
+```
+
+**Verify cleanup:**
+```bash
+find / -name '*kmagent*' 2>/dev/null
+systemctl list-units | grep kmagent
+```
+
+### Docker Container Won't Remove
+
+```bash scripts/install_docker.sh
+if [ "$(docker ps -aq -f name=km-agent)" ]; then
+    docker stop km-agent
+    docker rm km-agent
+fi
+```
+
+**Force removal:**
+```bash
+docker rm -f km-agent
+docker rmi ghcr.io/kloudmate/km-agent:latest
+```
+
+## Getting Help
+
+<CardGroup cols={2}>
+  <Card title="GitHub Issues" icon="github" href="https://github.com/kloudmate/km-agent/issues">
+    Report bugs and request features
+  </Card>
+  
+  <Card title="Email Support" icon="envelope">
+    support@kloudmate.com
+  </Card>
+  
+  <Card title="Community Slack" icon="slack" href="https://kloudmate.slack.com">
+    Get help from the community
+  </Card>
+  
+  <Card title="Documentation" icon="book" href="https://docs.kloudmate.com">
+    Comprehensive guides and references
+  </Card>
+</CardGroup>
+
+### Information to Include
+
+When reporting issues, include:
+
+<Steps>
+  <Step title="Environment Details">
+    - Platform (Linux, Docker, Kubernetes, Windows)
+    - OS version and distribution
+    - Agent version
+    - Collector version
+  </Step>
+
+  <Step title="Logs">
+    ```bash
+    # Linux
+    sudo journalctl -u kmagent -n 100 > agent-logs.txt
+
+    # Docker
+    docker logs km-agent > agent-logs.txt 2>&1
+
+    # Kubernetes
+    kubectl logs -n km-agent <pod-name> > agent-logs.txt
+    ```
+  </Step>
+
+  <Step title="Configuration">
+    Redact sensitive information (API keys) before sharing:
+    ```bash
+    cat /etc/kmagent/config.yaml | sed 's/KM_API_KEY:.*/KM_API_KEY: [REDACTED]/'
+    ```
+  </Step>
+
+  <Step title="Steps to Reproduce">
+    Provide clear, detailed steps to reproduce the issue
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Monitoring" icon="heartbeat" href="/operations/monitoring">
+    Set up monitoring and health checks
+  </Card>
+  
+  <Card title="Upgrading" icon="arrow-up" href="/operations/upgrading">
+    Upgrade to the latest version
+  </Card>
+</CardGroup>

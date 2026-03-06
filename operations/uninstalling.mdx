@@ -1,0 +1,693 @@
+---
+title: 'Uninstalling'
+description: 'Completely remove KloudMate Agent from all supported platforms'
+icon: 'trash-can'
+---
+
+This guide covers complete removal of the KloudMate Agent from each supported platform. All configuration files, logs, and binaries will be removed.
+
+<Warning>
+**Data Loss Warning**
+
+Uninstalling the agent will:
+- Stop all telemetry collection
+- Remove configuration files
+- Delete local logs
+- Remove systemd services (Linux)
+- Delete container images (Docker)
+
+Ensure you have backups of any custom configurations before proceeding.
+</Warning>
+
+## Linux Uninstallation
+
+The KloudMate Agent provides an automated uninstall script for Linux systems.
+
+### Automated Uninstall (Recommended)
+
+```bash scripts/uninstall_linux.sh
+bash -c "$(curl -L https://cdn.kloudmate.com/scripts/uninstall_linux.sh)"
+```
+
+The script will:
+1. Stop the kmagent service
+2. Disable systemd service
+3. Remove the package via package manager
+4. Clean up configuration files
+5. Remove systemd service files
+6. Clear journal logs
+
+### What the Uninstall Script Does
+
+<Steps>
+  <Step title="Stop and Disable Service">
+    ```bash scripts/uninstall_linux.sh
+    echo "🛑 Stopping KM Agent service..."
+    sudo systemctl stop kmagent 2>/dev/null || true
+    sudo systemctl disable kmagent 2>/dev/null || true
+    ```
+  </Step>
+
+  <Step title="Remove Systemd Service Files">
+    ```bash scripts/uninstall_linux.sh
+    echo "🗑️  Removing systemd service..."
+    sudo rm -f /etc/systemd/system/kmagent.service
+    sudo rm -f /usr/lib/systemd/system/kmagent.service
+    sudo systemctl daemon-reload
+    sudo systemctl reset-failed 2>/dev/null || true
+    ```
+  </Step>
+
+  <Step title="Clear Journal Logs">
+    ```bash scripts/uninstall_linux.sh
+    echo "📝 Clearing journal logs..."
+    sudo journalctl --rotate 2>/dev/null || true
+    sudo journalctl --vacuum-time=1s --unit=kmagent 2>/dev/null || true
+    ```
+  </Step>
+
+  <Step title="Remove Package">
+    The script detects your package manager and removes the package:
+
+    ```bash scripts/uninstall_linux.sh
+    PKG_MANAGER=""
+    if command -v apt-get &>/dev/null && dpkg -l kmagent &>/dev/null 2>&1; then
+      PKG_MANAGER="apt"
+    elif command -v dnf &>/dev/null && rpm -q kmagent &>/dev/null 2>&1; then
+      PKG_MANAGER="dnf"
+    elif command -v yum &>/dev/null && rpm -q kmagent &>/dev/null 2>&1; then
+      PKG_MANAGER="yum"
+    fi
+    ```
+
+    **Debian/Ubuntu:**
+    ```bash scripts/uninstall_linux.sh
+    sudo apt-get purge -y kmagent 2>/dev/null || sudo dpkg -r kmagent
+    sudo apt-get autoremove -y 2>/dev/null || true
+    ```
+
+    **RHEL/CentOS:**
+    ```bash scripts/uninstall_linux.sh
+    sudo dnf remove -y kmagent
+    # or
+    sudo yum remove -y kmagent
+    ```
+  </Step>
+
+  <Step title="Clean Up Files and Directories">
+    ```bash scripts/uninstall_linux.sh
+    echo "🗑️  Cleaning up files..."
+    sudo rm -f /usr/local/bin/kmagent
+    sudo rm -f /usr/bin/kmagent
+    sudo rm -rf /etc/kmagent/
+    sudo rm -rf /var/log/kmagent/
+    sudo rm -rf /var/lib/kmagent/
+    sudo rm -f /tmp/kmagent.* /tmp/km-agent.* 2>/dev/null || true
+    ```
+  </Step>
+</Steps>
+
+### Manual Uninstall (Linux)
+
+If you prefer manual removal:
+
+<Tabs>
+  <Tab title="Debian/Ubuntu">
+    <Steps>
+      <Step title="Stop Service">
+        ```bash
+        sudo systemctl stop kmagent
+        sudo systemctl disable kmagent
+        ```
+      </Step>
+
+      <Step title="Remove Package">
+        ```bash
+        # Purge removes package and config files
+        sudo apt-get purge -y kmagent
+        sudo apt-get autoremove -y
+        ```
+      </Step>
+
+      <Step title="Remove Service Files">
+        ```bash
+        sudo rm -f /etc/systemd/system/kmagent.service
+        sudo rm -f /lib/systemd/system/kmagent.service
+        sudo systemctl daemon-reload
+        ```
+      </Step>
+
+      <Step title="Clean Up Directories">
+        ```bash
+        sudo rm -rf /etc/kmagent/
+        sudo rm -rf /var/log/kmagent/
+        sudo rm -rf /var/lib/kmagent/
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="RHEL/CentOS">
+    <Steps>
+      <Step title="Stop Service">
+        ```bash
+        sudo systemctl stop kmagent
+        sudo systemctl disable kmagent
+        ```
+      </Step>
+
+      <Step title="Remove Package">
+        ```bash
+        sudo dnf remove -y kmagent
+        # or
+        sudo yum remove -y kmagent
+        ```
+      </Step>
+
+      <Step title="Remove Service Files">
+        ```bash
+        sudo rm -f /etc/systemd/system/kmagent.service
+        sudo rm -f /usr/lib/systemd/system/kmagent.service
+        sudo systemctl daemon-reload
+        ```
+      </Step>
+
+      <Step title="Clean Up Directories">
+        ```bash
+        sudo rm -rf /etc/kmagent/
+        sudo rm -rf /var/log/kmagent/
+        sudo rm -rf /var/lib/kmagent/
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+### Verify Removal (Linux)
+
+<CodeGroup>
+
+```bash Check Binary
+which kmagent
+# Should return: command not found
+```
+
+```bash Check Package
+# Debian/Ubuntu
+dpkg -l | grep kmagent
+
+# RHEL/CentOS
+rpm -q kmagent
+```
+
+```bash Check Service
+systemctl list-units | grep kmagent
+systemctl status kmagent
+# Should return: Unit kmagent.service could not be found
+```
+
+```bash Find Residual Files
+find / -name '*kmagent*' 2>/dev/null
+```
+
+</CodeGroup>
+
+### Security Note (Linux)
+
+The uninstall script includes a security reminder:
+
+```bash scripts/uninstall_linux.sh
+echo "🔒 Note: Consider running 'history -c && exit' to clear shell history"
+echo "   if API keys were visible in environment variables."
+```
+
+If you exposed API keys in your shell:
+
+```bash
+history -c  # Clear current session history
+rm ~/.bash_history  # Remove persistent history file
+exit  # Log out to apply changes
+```
+
+## Docker Uninstallation
+
+For Docker installations, remove the container and optionally the image.
+
+### Using Uninstall Script
+
+The installation script includes an uninstall function:
+
+```bash scripts/install_docker.sh
+bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_docker.sh)" -- uninstall
+```
+
+The script will:
+
+```bash scripts/install_docker.sh
+uninstall_agent() {
+    echo "🧹 Uninstalling km-agent..."
+
+    if [ "$(docker ps -aq -f name=km-agent)" ]; then
+        docker stop km-agent
+        docker rm km-agent
+        echo "✅ Container 'km-agent' stopped and removed."
+    else
+        echo "⚡ No running 'km-agent' container found."
+    fi
+
+    if docker image inspect $IMAGE_NAME > /dev/null 2>&1; then
+        docker rmi $IMAGE_NAME
+        echo "✅ Docker image removed."
+    else
+        echo "⚡ No '$IMAGE_NAME' image found."
+    fi
+
+    echo "✅ Uninstallation complete."
+    exit 0
+}
+```
+
+### Manual Docker Uninstall
+
+<Steps>
+  <Step title="Stop Container">
+    ```bash
+    docker stop km-agent
+    ```
+  </Step>
+
+  <Step title="Remove Container">
+    ```bash
+    docker rm km-agent
+    ```
+  </Step>
+
+  <Step title="Remove Image (Optional)">
+    ```bash
+    docker rmi ghcr.io/kloudmate/km-agent:latest
+    ```
+  </Step>
+
+  <Step title="Remove Volumes (If Any)">
+    ```bash
+    # List volumes
+    docker volume ls | grep km-agent
+
+    # Remove specific volumes
+    docker volume rm km-agent-data
+    ```
+  </Step>
+</Steps>
+
+### Force Removal (Docker)
+
+If the container won't stop:
+
+```bash
+# Force stop and remove
+docker rm -f km-agent
+
+# Remove all related containers
+docker ps -a | grep km-agent | awk '{print $1}' | xargs docker rm -f
+
+# Remove all related images
+docker images | grep km-agent | awk '{print $3}' | xargs docker rmi -f
+```
+
+### Verify Removal (Docker)
+
+<CodeGroup>
+
+```bash Check Container
+docker ps -a -f name=km-agent
+# Should return empty
+```
+
+```bash Check Image
+docker images | grep km-agent
+# Should return empty if image was removed
+```
+
+```bash Check Volumes
+docker volume ls | grep km-agent
+```
+
+</CodeGroup>
+
+## Kubernetes Uninstallation
+
+For Kubernetes deployments, use Helm to uninstall.
+
+### Helm Uninstall (Recommended)
+
+```bash
+helm uninstall kloudmate-release -n km-agent
+```
+
+This removes:
+- DaemonSet
+- Deployment
+- ConfigMaps
+- Services
+- ServiceAccount
+- ClusterRole and ClusterRoleBinding
+- Config Updater deployment
+
+### Complete Removal Including CRDs
+
+<Warning>
+**CRD Removal Impact**
+
+Removing CRDs will delete ALL `Instrumentation` custom resources in the cluster, not just those created by KloudMate Agent.
+
+Only remove CRDs if you're certain no other OpenTelemetry operators are using them.
+</Warning>
+
+<Steps>
+  <Step title="Uninstall Helm Release">
+    ```bash
+    helm uninstall kloudmate-release -n km-agent
+    ```
+  </Step>
+
+  <Step title="Remove CRDs">
+    ```bash README.md
+    kubectl delete -f https://raw.githubusercontent.com/kloudmate/km-agent/refs/heads/develop/deployment/helm/km-kube-agent/crds/crd-otel-instrumentation.yaml
+    ```
+
+    Or remove directly:
+    ```bash
+    kubectl delete crd instrumentations.opentelemetry.io
+    ```
+  </Step>
+
+  <Step title="Delete Namespace">
+    ```bash
+    kubectl delete namespace km-agent
+    ```
+  </Step>
+
+  <Step title="Remove ClusterRole and ClusterRoleBinding">
+    These are cluster-scoped and may persist:
+    ```bash
+    kubectl delete clusterrole km-agent-cluster-role
+    kubectl delete clusterrolebinding km-agent-cluster-role-binding
+    ```
+  </Step>
+</Steps>
+
+### Remove Instrumentation Annotations
+
+If you instrumented applications using annotations, remove them:
+
+```bash
+# Remove annotation from deployment
+kubectl annotate deployment <deployment-name> \
+  instrumentation.opentelemetry.io/inject-java-
+
+# Remove annotation from namespace
+kubectl annotate namespace <namespace> \
+  instrumentation.opentelemetry.io/inject-java-
+```
+
+### Manual Cleanup (Kubernetes)
+
+If Helm is unavailable:
+
+<Steps>
+  <Step title="Delete DaemonSet">
+    ```bash
+    kubectl delete daemonset km-agent -n km-agent
+    ```
+  </Step>
+
+  <Step title="Delete Deployment">
+    ```bash
+    kubectl delete deployment km-agent-cluster -n km-agent
+    kubectl delete deployment km-fleet-manager -n km-agent
+    ```
+  </Step>
+
+  <Step title="Delete ConfigMaps">
+    ```bash
+    kubectl delete configmap km-agent-configmap-daemonset -n km-agent
+    kubectl delete configmap km-agent-configmap-deployment -n km-agent
+    ```
+  </Step>
+
+  <Step title="Delete Services">
+    ```bash
+    kubectl delete service km-agent-svc -n km-agent
+    ```
+  </Step>
+
+  <Step title="Delete RBAC Resources">
+    ```bash
+    kubectl delete serviceaccount km-agent-sa -n km-agent
+    kubectl delete clusterrole km-agent-cluster-role
+    kubectl delete clusterrolebinding km-agent-cluster-role-binding
+    ```
+  </Step>
+
+  <Step title="Delete Namespace">
+    ```bash
+    kubectl delete namespace km-agent
+    ```
+  </Step>
+</Steps>
+
+### Verify Removal (Kubernetes)
+
+<CodeGroup>
+
+```bash Check Namespace
+kubectl get namespace km-agent
+# Should return: Error from server (NotFound)
+```
+
+```bash Check Pods
+kubectl get pods -n km-agent
+# Should return: No resources found
+```
+
+```bash Check CRDs
+kubectl get crd instrumentations.opentelemetry.io
+```
+
+```bash Check ClusterRole
+kubectl get clusterrole | grep km-agent
+```
+
+```bash Check All Resources
+kubectl get all -n km-agent
+```
+
+</CodeGroup>
+
+## Windows Uninstallation
+
+<Note>
+Windows uninstallation is performed through the Windows Control Panel or PowerShell.
+</Note>
+
+### Using Control Panel
+
+<Steps>
+  <Step title="Open Programs and Features">
+    1. Press `Win + R`
+    2. Type `appwiz.cpl` and press Enter
+  </Step>
+
+  <Step title="Find KloudMate Agent">
+    Locate "KloudMate Agent" in the list of installed programs
+  </Step>
+
+  <Step title="Uninstall">
+    1. Right-click "KloudMate Agent"
+    2. Select "Uninstall"
+    3. Follow the uninstall wizard
+  </Step>
+</Steps>
+
+### Using PowerShell
+
+```powershell
+# Stop service
+Stop-Service -Name "KloudMate Agent" -Force
+
+# Uninstall via WMI
+$app = Get-WmiObject -Class Win32_Product | Where-Object { $_.Name -match "KloudMate Agent" }
+$app.Uninstall()
+```
+
+### Manual Cleanup (Windows)
+
+If the uninstaller fails:
+
+```powershell
+# Stop service
+Stop-Service -Name "KloudMate Agent"
+
+# Delete service
+sc.exe delete "KloudMate Agent"
+
+# Remove installation directory
+Remove-Item -Path "C:\Program Files\KloudMate\Agent" -Recurse -Force
+
+# Remove configuration
+Remove-Item -Path "C:\ProgramData\KloudMate\Agent" -Recurse -Force
+```
+
+## Post-Uninstall Checklist
+
+After uninstalling, verify complete removal:
+
+<Steps>
+  <Step title="Verify Service/Container Stopped">
+    **Linux:**
+    ```bash
+    sudo systemctl status kmagent
+    ```
+
+    **Docker:**
+    ```bash
+    docker ps | grep km-agent
+    ```
+
+    **Kubernetes:**
+    ```bash
+    kubectl get pods -n km-agent
+    ```
+  </Step>
+
+  <Step title="Check for Residual Files">
+    **Linux:**
+    ```bash
+    find / -name '*kmagent*' 2>/dev/null
+    find / -name '*km-agent*' 2>/dev/null
+    ```
+  </Step>
+
+  <Step title="Verify No Data Being Sent">
+    Check the KloudMate platform to ensure the agent is no longer reporting
+  </Step>
+
+  <Step title="Clean Up API Keys (Optional)">
+    If you're not reinstalling, revoke the API key from the KloudMate platform:
+    1. Go to https://app.kloudmate.com/settings/
+    2. Navigate to API Keys
+    3. Revoke the key used for this agent
+  </Step>
+</Steps>
+
+## Reinstallation
+
+If you need to reinstall after uninstalling:
+
+<CardGroup cols={3}>
+  <Card title="Linux" icon="linux" href="/installation/linux">
+    Install on Linux systems
+  </Card>
+  
+  <Card title="Docker" icon="docker" href="/installation/docker">
+    Deploy as Docker container
+  </Card>
+  
+  <Card title="Kubernetes" icon="dharmachakra" href="/installation/kubernetes">
+    Deploy to Kubernetes cluster
+  </Card>
+</CardGroup>
+
+## Troubleshooting Uninstallation
+
+### Service Won't Stop
+
+<AccordionGroup>
+  <Accordion title="Force Stop (Linux)">
+    ```bash
+    # Kill process
+    sudo pkill -9 kmagent
+
+    # Force stop service
+    sudo systemctl kill kmagent
+    ```
+  </Accordion>
+
+  <Accordion title="Force Stop (Docker)">
+    ```bash
+    docker kill km-agent
+    docker rm -f km-agent
+    ```
+  </Accordion>
+
+  <Accordion title="Force Stop (Kubernetes)">
+    ```bash
+    kubectl delete pod <pod-name> -n km-agent --force --grace-period=0
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Package Won't Remove
+
+**Linux:**
+```bash
+# Debian/Ubuntu - force removal
+sudo dpkg --remove --force-remove-reinstreq kmagent
+
+# RHEL/CentOS - force removal
+sudo rpm -e --nodeps kmagent
+```
+
+### Namespace Stuck Terminating (Kubernetes)
+
+If the namespace won't delete:
+
+```bash
+# Get namespace JSON
+kubectl get namespace km-agent -o json > km-agent-ns.json
+
+# Edit to remove finalizers
+vim km-agent-ns.json
+# Remove "finalizers" section
+
+# Apply without finalizers
+kubectl replace --raw "/api/v1/namespaces/km-agent/finalize" -f ./km-agent-ns.json
+```
+
+## Data Retention
+
+<Note>
+**Platform Data Retention**
+
+Uninstalling the agent only removes it from your infrastructure. Data already collected and sent to the KloudMate platform will be retained according to your plan's retention policy.
+
+To delete historical data, contact support@kloudmate.com.
+</Note>
+
+## Support
+
+If you encounter issues during uninstallation:
+
+<CardGroup cols={2}>
+  <Card title="GitHub Issues" icon="github" href="https://github.com/kloudmate/km-agent/issues">
+    Report uninstallation problems
+  </Card>
+  
+  <Card title="Email Support" icon="envelope">
+    support@kloudmate.com
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+After uninstalling:
+
+<CardGroup cols={2}>
+  <Card title="Reinstall" icon="rotate-right" href="/installation/linux">
+    Reinstall the agent if needed
+  </Card>
+  
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Get help with issues
+  </Card>
+</CardGroup>

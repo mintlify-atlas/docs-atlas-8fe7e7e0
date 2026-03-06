@@ -1,0 +1,400 @@
+---
+title: 'Monitoring'
+description: 'Monitor KloudMate Agent health, performance, and operational metrics'
+icon: 'heartbeat'
+---
+
+The KloudMate Agent provides comprehensive monitoring capabilities through built-in health checks, status reporting, and observability endpoints.
+
+## Health Check Endpoints
+
+The agent exposes health check endpoints via the OpenTelemetry Collector's `health_check` extension.
+
+### Configuration
+
+The health check extension is configured in the collector configuration:
+
+```yaml internal/agent/agent.go
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+```
+
+<Note>
+The health check endpoint listens on port **13133** by default. This port should be accessible for monitoring systems.
+</Note>
+
+### Health Check Endpoints
+
+<CardGroup cols={2}>
+  <Card title="Liveness Probe" icon="heart-pulse">
+    **Endpoint:** `http://localhost:13133/`
+    
+    Returns 200 if the collector is running
+  </Card>
+  
+  <Card title="Readiness Probe" icon="check-circle">
+    **Endpoint:** `http://localhost:13133/`
+    
+    Returns 200 if collector can receive data
+  </Card>
+</CardGroup>
+
+### Testing Health Endpoints
+
+<CodeGroup>
+
+```bash Linux/Docker
+curl http://localhost:13133/
+```
+
+```bash Kubernetes (DaemonSet)
+kubectl exec -n km-agent ds/km-agent -- curl http://localhost:13133/
+```
+
+```bash Kubernetes (Deployment)
+kubectl exec -n km-agent deployment/km-agent-cluster -- curl http://localhost:13133/
+```
+
+```powershell Windows
+Invoke-WebRequest -Uri http://localhost:13133/
+```
+
+</CodeGroup>
+
+## Agent Status Reporting
+
+The agent reports its operational status to the KloudMate platform through periodic status updates.
+
+### Status Parameters
+
+The agent sends the following status information:
+
+```go internal/updater/updater.go
+data := map[string]interface{}{
+    "is_docker":          u.cfg.DockerMode,
+    "hostname":           u.cfg.Hostname(),
+    "platform":           platform,
+    "architecture":       runtime.GOARCH,
+    "agent_version":      p.Version,
+    "collector_version":  version.GetCollectorVersion(),
+    "agent_status":       p.AgentStatus,
+    "collector_status":   p.CollectorStatus,
+    "last_error_message": p.CollectorLastError,
+}
+```
+
+### Status Values
+
+<Steps>
+  <Step title="Agent Status">
+    - **Running**: Agent is operational and managing the collector
+    - **Stopped**: Agent has been stopped or is shutting down
+  </Step>
+  
+  <Step title="Collector Status">
+    - **Running**: OpenTelemetry Collector is actively processing telemetry
+    - **Stopped**: Collector is not running (may be restarting or failed)
+  </Step>
+</Steps>
+
+## Systemd Service Monitoring (Linux)
+
+For Linux installations, the agent runs as a systemd service.
+
+### Check Service Status
+
+```bash
+sudo systemctl status kmagent
+```
+
+**Expected Output:**
+```
+● kmagent.service - KloudMate Agent
+   Loaded: loaded (/lib/systemd/system/kmagent.service; enabled)
+   Active: active (running) since Thu 2024-03-06 10:15:30 UTC; 2h 15min ago
+ Main PID: 12345 (kmagent)
+    Tasks: 23
+   Memory: 128.5M
+   CGroup: /system.slice/kmagent.service
+           └─12345 /usr/bin/kmagent start
+```
+
+### Service Management Commands
+
+<CodeGroup>
+
+```bash Check Status
+sudo systemctl status kmagent
+```
+
+```bash View Logs
+sudo journalctl -u kmagent -f
+```
+
+```bash View Recent Errors
+sudo journalctl -u kmagent --since "1 hour ago" -p err
+```
+
+```bash Check If Enabled
+sudo systemctl is-enabled kmagent
+```
+
+```bash Check If Active
+sudo systemctl is-active kmagent
+```
+
+</CodeGroup>
+
+## Docker Container Monitoring
+
+For Docker installations, monitor the agent container directly.
+
+### Container Status
+
+```bash
+docker ps -f name=km-agent
+```
+
+### Container Logs
+
+<CodeGroup>
+
+```bash Real-time Logs
+docker logs -f km-agent
+```
+
+```bash Last 100 Lines
+docker logs --tail 100 km-agent
+```
+
+```bash Logs Since Timestamp
+docker logs --since 2024-03-06T10:00:00 km-agent
+```
+
+```bash Search for Errors
+docker logs km-agent 2>&1 | grep -i error
+```
+
+</CodeGroup>
+
+### Container Resource Usage
+
+```bash
+docker stats km-agent --no-stream
+```
+
+**Example Output:**
+```
+CONTAINER ID   NAME       CPU %     MEM USAGE / LIMIT     MEM %
+a1b2c3d4e5f6   km-agent   2.5%      128MiB / 1.95GiB     6.4%
+```
+
+## Kubernetes Monitoring
+
+For Kubernetes deployments, use kubectl and Kubernetes-native monitoring.
+
+### Pod Status
+
+<CodeGroup>
+
+```bash DaemonSet Pods
+kubectl get pods -n km-agent -l app.kubernetes.io/component=node-agent
+```
+
+```bash Deployment Pods
+kubectl get pods -n km-agent -l app.kubernetes.io/component=cluster-agent
+```
+
+```bash All Agent Pods
+kubectl get pods -n km-agent -l app.kubernetes.io/name=km-kube-agent
+```
+
+</CodeGroup>
+
+### Pod Health
+
+```bash
+kubectl describe pod -n km-agent <pod-name>
+```
+
+Check the **Conditions** section for:
+- **Ready**: True when pod is accepting traffic
+- **ContainersReady**: True when all containers are ready
+- **PodScheduled**: True when pod is assigned to a node
+
+### Pod Logs
+
+<CodeGroup>
+
+```bash DaemonSet Logs
+kubectl logs -n km-agent -l app.kubernetes.io/component=node-agent -f
+```
+
+```bash Specific Pod
+kubectl logs -n km-agent <pod-name> -f
+```
+
+```bash Previous Container Instance
+kubectl logs -n km-agent <pod-name> --previous
+```
+
+```bash Last Hour
+kubectl logs -n km-agent <pod-name> --since=1h
+```
+
+</CodeGroup>
+
+### Resource Usage
+
+```bash
+kubectl top pods -n km-agent
+```
+
+### Events
+
+Monitor Kubernetes events for agent-related issues:
+
+```bash
+kubectl get events -n km-agent --sort-by='.lastTimestamp'
+```
+
+## Configuration Update Monitoring
+
+The agent periodically checks for configuration updates from the KloudMate platform.
+
+### Update Check Interval
+
+The default check interval is configurable:
+
+```go cmd/kmagent/main.go
+altsrc.NewIntFlag(&cli.IntFlag{
+    Name:        "config-check-interval",
+    Usage:       "Interval in seconds to check for config updates",
+    Value:       60,
+    EnvVars:     []string{"KM_CONFIG_CHECK_INTERVAL"},
+    Destination: &program.cfg.ConfigCheckInterval,
+}),
+```
+
+<Note>
+Default configuration check interval is **60 seconds**. For Kubernetes deployments, this can be customized via Helm values.
+</Note>
+
+### Monitoring Update Checks
+
+Look for these log messages:
+
+```log
+INFO  config update checker started
+DEBUG checking for configuration updates
+DEBUG no configuration change detected
+INFO  configuration changed, restarting collector
+INFO  collector restarted successfully
+```
+
+## Performance Metrics
+
+### Agent Lifecycle Events
+
+The agent logs key lifecycle events:
+
+```go internal/agent/agent.go
+a.logger.Info("agent start sequence initiated")
+a.logger.Info("collector instance created, starting run loop")
+a.logger.Info("collector run loop exited normally")
+a.logger.Info("collector restarted successfully")
+```
+
+### Error Tracking
+
+Monitor for these error patterns:
+
+```log
+ERROR Initial collector run failed
+ERROR Periodic config check failed
+ERROR failed to create new collector instance
+ERROR collector run loop exited with error
+```
+
+## Monitoring Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Set Up Alerts" icon="bell">
+    Configure alerts for:
+    - Agent/collector status changes
+    - Health check failures
+    - Configuration update failures
+    - High resource usage
+  </Card>
+  
+  <Card title="Regular Health Checks" icon="calendar-check">
+    Schedule periodic health checks:
+    - Every 30 seconds for production
+    - Monitor response time trends
+    - Track uptime metrics
+  </Card>
+  
+  <Card title="Log Aggregation" icon="database">
+    Centralize logs for:
+    - Multi-host deployments
+    - Historical analysis
+    - Pattern detection
+    - Compliance requirements
+  </Card>
+  
+  <Card title="Resource Monitoring" icon="gauge">
+    Track resource usage:
+    - CPU utilization trends
+    - Memory consumption patterns
+    - Network traffic volume
+    - Disk I/O operations
+  </Card>
+</CardGroup>
+
+## Troubleshooting Monitoring Issues
+
+### Health Check Not Responding
+
+<Steps>
+  <Step title="Verify Port Accessibility">
+    Ensure port 13133 is not blocked by firewall:
+    ```bash
+    sudo netstat -tlnp | grep 13133
+    ```
+  </Step>
+  
+  <Step title="Check Collector Status">
+    Verify the collector is running:
+    ```bash
+    sudo systemctl status kmagent
+    ```
+  </Step>
+  
+  <Step title="Review Configuration">
+    Confirm health_check extension is enabled in the collector config
+  </Step>
+</Steps>
+
+### Missing Status Updates
+
+<Warning>
+If status updates are not appearing on the KloudMate platform:
+
+1. Verify network connectivity to `https://api.kloudmate.com`
+2. Check API key is valid and properly configured
+3. Review agent logs for connection errors
+4. Confirm the update endpoint URL is correct
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Diagnose and resolve common issues
+  </Card>
+  
+  <Card title="Upgrading" icon="arrow-up" href="/operations/upgrading">
+    Upgrade to the latest version
+  </Card>
+</CardGroup>

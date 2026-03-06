@@ -1,0 +1,457 @@
+---
+title: Remote Configuration
+description: Dynamic configuration updates from the KloudMate platform
+---
+
+The KloudMate Agent features a powerful remote configuration system that enables dynamic updates to the OpenTelemetry Collector pipeline without requiring agent restarts or manual file edits.
+
+## How Remote Configuration Works
+
+The agent periodically checks for configuration updates from the KloudMate platform and automatically applies changes when detected.
+
+<Steps>
+  <Step title="Configuration Check">
+    Agent polls the update endpoint at the configured interval (default: 60 seconds)
+    
+    ```go
+    func (a *Agent) runConfigUpdateChecker(ctx context.Context) {
+        ticker := time.NewTicker(time.Duration(a.cfg.ConfigCheckInterval) * time.Second)
+        defer ticker.Stop()
+        
+        for {
+            select {
+            case <-ticker.C:
+                if err := a.performConfigCheck(ctx); err != nil {
+                    a.logger.Errorf("Periodic config check failed: %v", err)
+                }
+            case <-a.shutdownSignal:
+                return
+            }
+        }
+    }
+    ```
+  </Step>
+  
+  <Step title="Status Report">
+    Agent sends current status to the platform including:
+    - Agent version
+    - Collector status (Running/Stopped)
+    - Last error message (if any)
+    - System hostname
+    
+    ```go
+    params := updater.UpdateCheckerParams{
+        Version:             a.version,
+        CollectorStatus:     "Running",
+        AgentStatus:         "Running",
+        CollectorLastError:  a.collectorError,
+    }
+    ```
+  </Step>
+  
+  <Step title="Configuration Comparison">
+    Platform compares the agent's current configuration with the desired state
+  </Step>
+  
+  <Step title="Update Application">
+    If changes are detected:
+    1. New configuration is written to a temporary file
+    2. Temporary file replaces the active configuration
+    3. Collector is gracefully shut down
+    4. New collector instance starts with updated configuration
+    
+    ```go
+    func (a *Agent) UpdateConfig(_ context.Context, newConfig map[string]interface{}) error {
+        configYAML, err := yaml.Marshal(newConfig)
+        if err != nil {
+            return fmt.Errorf("failed to marshal new config to YAML: %w", err)
+        }
+        
+        tempFile := a.cfg.OtelConfigPath + ".new"
+        if err := os.WriteFile(tempFile, configYAML, 0644); err != nil {
+            return fmt.Errorf("failed to write new config to temporary file: %w", err)
+        }
+        
+        if err := os.Rename(tempFile, a.cfg.OtelConfigPath); err != nil {
+            return fmt.Errorf("failed to replace config file: %w", err)
+        }
+        
+        return nil
+    }
+    ```
+  </Step>
+</Steps>
+
+## Configuration Parameters
+
+### Update Endpoint
+
+<ParamField path="KM_UPDATE_ENDPOINT" type="string" default="auto-derived">
+  API endpoint for configuration updates. If not specified, automatically derived from the collector endpoint.
+  
+  **Auto-derivation logic:**
+  - Collector: `https://otel.kloudmate.com:4318`
+  - Update endpoint: `https://api.kloudmate.com/agents/config-check`
+  
+  ```go
+  func GetAgentConfigUpdaterURL(collectorEndpoint string) string {
+      const fallbackURL = "https://api.kloudmate.com/agents/config-check"
+      
+      u, _ := url.Parse(collectorEndpoint)
+      host := u.Hostname()
+      parts := strings.Split(host, ".")
+      
+      if len(parts) < 2 {
+          return fallbackURL
+      }
+      
+      // Extract root domain (e.g., "kloudmate.dev" from "otel.kloudmate.dev")
+      rootDomain := parts[len(parts)-2] + "." + parts[len(parts)-1]
+      
+      updateURL := url.URL{
+          Scheme: u.Scheme,
+          Host:   "api." + rootDomain,
+          Path:   "/agents/config-check",
+      }
+      
+      return updateURL.String()
+  }
+  ```
+</ParamField>
+
+<ParamField path="KM_CONFIG_CHECK_INTERVAL" type="integer" default="60">
+  Interval in seconds between configuration update checks.
+  
+  **Recommended values:**
+  - Production: 60-300 seconds
+  - Development: 10-30 seconds
+  - Disable: Set to `0` to disable remote updates
+</ParamField>
+
+### CLI Configuration
+
+<CodeGroup>
+```bash Agent Config File
+# agent-config.yaml
+key: ${KM_API_KEY}
+endpoint: https://otel.kloudmate.com:4318
+interval: 10s
+debug: basic
+```
+
+```bash Environment Variables
+export KM_CONFIG_CHECK_INTERVAL=60
+export KM_UPDATE_ENDPOINT="https://api.kloudmate.com/agents/config-check"
+
+kmagent start
+```
+
+```bash Command Line Flags
+kmagent start \
+  --config-check-interval=60 \
+  --update-endpoint="https://api.kloudmate.com/agents/config-check"
+```
+</CodeGroup>
+
+## Kubernetes Configuration Updates
+
+In Kubernetes deployments, the configuration updater runs as a separate deployment that manages both DaemonSet and Deployment collector configurations.
+
+### Architecture
+
+<CodeGroup>
+```yaml Deployment Structure
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: km-fleet-manager
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+      - name: config-updater
+        env:
+        - name: KM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: km-agent-secret
+              key: api-key
+        - name: KM_COLLECTOR_ENDPOINT
+          value: "https://otel.kloudmate.com:4318"
+        - name: KM_CONFIG_CHECK_INTERVAL
+          value: "30s"
+        - name: KM_UPDATE_ENDPOINT
+          value: "https://api.kloudmate.com/agents/config-check"
+        - name: KM_CFG_UPDATER_RPC_ADDR
+          value: "5501"
+        - name: KM_CLUSTER_NAME
+          value: "production-cluster"
+```
+</CodeGroup>
+
+### RPC Communication
+
+The config updater uses gRPC to communicate updates to agent pods:
+
+<ParamField path="KM_CFG_UPDATER_RPC_ADDR" type="string" default="5501">
+  Port for the configuration updater RPC server.
+</ParamField>
+
+```go
+addr := ":" + os.Getenv("KM_CFG_UPDATER_RPC_ADDR")
+```
+
+### Feature Toggles
+
+Control which telemetry types are collected via environment variables:
+
+<ParamField path="KM_LOGS_ENABLED" type="boolean" default="false">
+  Enable log collection from Kubernetes pods.
+</ParamField>
+
+<ParamField path="KM_APM_ENABLED" type="boolean" default="false">
+  Enable automatic instrumentation for application tracing.
+</ParamField>
+
+```go
+logsval, present := os.LookupEnv("KM_LOGS_ENABLED")
+if !present {
+    fmt.Println("Environment variable KM_LOGS_ENABLED is not set.")
+}
+logsEnabled, err := strconv.ParseBool(logsval)
+
+apmval, present := os.LookupEnv("KM_APM_ENABLED")
+apmEnabled, err := strconv.ParseBool(apmval)
+```
+
+## Update Process Details
+
+### Graceful Collector Restart
+
+When a configuration change is detected, the agent performs a graceful restart:
+
+```go
+func (a *Agent) performConfigCheck(agentCtx context.Context) error {
+    ctx, cancel := context.WithTimeout(agentCtx, 10*time.Second)
+    defer cancel()
+    
+    restart, newConfig, err := a.updater.CheckForUpdates(ctx, params)
+    if err != nil {
+        return fmt.Errorf("updater.CheckForUpdates failed: %w", err)
+    }
+    
+    if newConfig != nil && restart {
+        if err := a.UpdateConfig(ctx, newConfig); err != nil {
+            return fmt.Errorf("failed to update config file: %w", err)
+        }
+        
+        a.logger.Info("configuration changed, restarting collector")
+        
+        // Stop current collector instance
+        a.stopCollectorInstance()
+        
+        // Start new collector with updated config
+        a.wg.Add(1)
+        go func() {
+            defer a.wg.Done()
+            if err := a.manageCollectorLifecycle(agentCtx); err != nil {
+                a.collectorError = err.Error()
+            } else {
+                a.logger.Info("collector restarted successfully")
+            }
+        }()
+    }
+    
+    return nil
+}
+```
+
+### Zero Data Loss
+
+The collector restart process ensures zero data loss:
+
+1. **Buffering**: The collector continues accepting data during shutdown
+2. **Queue Flushing**: All queued data is sent before shutdown completes
+3. **Quick Restart**: New collector starts immediately after old one stops
+
+<Note>
+  The collector's sending queue configuration ensures data is buffered during restarts:
+  
+  ```yaml
+  exporters:
+    otlphttp:
+      sending_queue:
+        enabled: true
+        num_consumers: 10
+        queue_size: 10000
+  ```
+</Note>
+
+## Monitoring Configuration Updates
+
+### Log Messages
+
+Key log messages to monitor:
+
+```log
+INFO  config update checker started  {"updateURL": "https://api.kloudmate.com/agents/config-check", "intervalSeconds": 60}
+DEBUG checking for configuration updates
+INFO  collector configuration updated  {"configPath": "/etc/kmagent/config.yaml"}
+INFO  configuration changed, restarting collector
+INFO  shutting down active collector instance
+INFO  collector shutdown complete
+INFO  collector instance created, starting run loop
+INFO  collector restarted successfully
+```
+
+### Error Scenarios
+
+<AccordionGroup>
+  <Accordion title="Update Endpoint Unreachable">
+    ```log
+    ERROR Periodic config check failed: updater.CheckForUpdates failed: Post "https://api.kloudmate.com/agents/config-check": dial tcp: lookup api.kloudmate.com: no such host
+    ```
+    
+    **Resolution:**
+    - Verify network connectivity
+    - Check DNS resolution
+    - Confirm firewall rules allow outbound HTTPS
+  </Accordion>
+
+  <Accordion title="Invalid Configuration Received">
+    ```log
+    ERROR failed to update config file: failed to marshal new config to YAML: yaml: unmarshal errors
+    ```
+    
+    **Resolution:**
+    - Contact KloudMate support
+    - Check platform for configuration errors
+    - Review agent logs for specific validation errors
+  </Accordion>
+
+  <Accordion title="Collector Restart Failure">
+    ```log
+    ERROR collector run loop exited with error: failed to load config: cannot unmarshal YAML: yaml: line 42: mapping values are not allowed in this context
+    ```
+    
+    **Resolution:**
+    - Agent will continue checking for updates
+    - Fix configuration in KloudMate platform
+    - Next update check will apply corrected config
+  </Accordion>
+</AccordionGroup>
+
+## Security Considerations
+
+### Authentication
+
+All configuration update requests are authenticated using the API key:
+
+```yaml
+exporters:
+  otlphttp:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    headers:
+      Authorization: ${env:KM_API_KEY}
+```
+
+### Configuration Validation
+
+The agent validates configuration before applying:
+
+- YAML syntax validation
+- Required field verification
+- Schema compliance checking
+- Circular dependency detection
+
+<Warning>
+  Invalid configurations are rejected and logged. The agent continues running with the previous valid configuration.
+</Warning>
+
+### File Permissions
+
+Configuration files should have restricted permissions:
+
+```bash
+# Linux/macOS
+sudo chmod 644 /etc/kmagent/config.yaml
+sudo chown root:root /etc/kmagent/config.yaml
+
+# Verify permissions
+ls -l /etc/kmagent/config.yaml
+# -rw-r--r-- 1 root root 2048 Jan 15 10:30 /etc/kmagent/config.yaml
+```
+
+## Disabling Remote Updates
+
+To disable remote configuration updates:
+
+<CodeGroup>
+```bash Environment Variable
+export KM_CONFIG_CHECK_INTERVAL=0
+kmagent start
+```
+
+```yaml Agent Config
+key: ${KM_API_KEY}
+endpoint: https://otel.kloudmate.com:4318
+interval: 0  # Disables updates
+```
+
+```bash CLI Flag
+kmagent start --config-check-interval=0
+```
+</CodeGroup>
+
+<Note>
+  When remote updates are disabled, you must manually update configuration files and restart the agent for changes to take effect.
+</Note>
+
+## Advanced Configuration
+
+### Custom Update Endpoint
+
+For self-hosted or regional deployments:
+
+```bash
+export KM_COLLECTOR_ENDPOINT="https://otel.eu.kloudmate.com:4318"
+export KM_UPDATE_ENDPOINT="https://api.eu.kloudmate.com/agents/config-check"
+
+kmagent start
+```
+
+### Namespace-Specific Configuration (Kubernetes)
+
+Control which namespaces are monitored:
+
+<ParamField path="KM_K8S_MONITORED_NAMESPACES" type="string" default="all">
+  Comma-separated list of Kubernetes namespaces to monitor. Set to empty or omit for all namespaces.
+</ParamField>
+
+```yaml
+env:
+- name: KM_K8S_MONITORED_NAMESPACES
+  value: "production,staging,default"
+```
+
+```bash
+# In the config updater startup script
+if [ -z "$KM_K8S_MONITORED_NAMESPACES" ]; then
+  export KM_K8S_MONITORED_NAMESPACES_YAML='all'
+else
+  export KM_K8S_MONITORED_NAMESPACES_YAML=$(echo "[\"$(echo "$KM_K8S_MONITORED_NAMESPACES" | sed 's/,/\",\"/g')\"]
+")
+fi
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="code" href="/configuration/environment-variables">
+    Complete reference of all configuration variables
+  </Card>
+  <Card title="OpenTelemetry Components" icon="diagram-project" href="/configuration/opentelemetry-components">
+    Customize receivers, processors, and exporters
+  </Card>
+</CardGroup>

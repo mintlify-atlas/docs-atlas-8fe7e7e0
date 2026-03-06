@@ -1,0 +1,672 @@
+---
+title: 'Agent Configuration'
+description: 'Complete reference for KloudMate Agent configuration parameters and options'
+icon: 'gear'
+---
+
+## Overview
+
+The KloudMate Agent configuration controls agent behavior, authentication, remote configuration updates, and platform-specific settings. This configuration is separate from the OpenTelemetry Collector configuration to enable independent management and updates.
+
+## Configuration Structure
+
+The agent configuration is defined by the `Config` struct in Go:
+
+```go ~/workspace/source/internal/config/config.go:14-26
+type Config struct {
+    // Collector configuration (OpenTelemetry collector config)
+    Collector           map[string]interface{}
+    AgentConfigPath     string
+    OtelConfigPath      string
+    ExporterEndpoint    string
+    ConfigUpdateURL     string
+    APIKey              string
+    ConfigCheckInterval int
+    DockerMode          bool
+    DockerEndpoint      string
+}
+```
+
+## Configuration Parameters
+
+### Authentication
+
+<ParamField path="APIKey" type="string" required>
+  Authentication key for KloudMate backend services.
+  
+  **Sources:**
+  - CLI flag: `--api-key`
+  - Environment: `KM_API_KEY`
+  - Config file: `key` field
+  
+  **Example:**
+  ```yaml
+  key: km_1234567890abcdef
+  ```
+  
+  <Warning>
+    Never commit API keys to version control. Use environment variables or secure secret management.
+  </Warning>
+</ParamField>
+
+### Endpoints
+
+<ParamField path="ExporterEndpoint" type="string" required>
+  OpenTelemetry exporter endpoint URL for sending telemetry data.
+  
+  **Sources:**
+  - CLI flag: `--collector-endpoint`
+  - Environment: `KM_COLLECTOR_ENDPOINT`
+  - Config file: `endpoint` field
+  
+  **Default:** `https://otel.kloudmate.com:4318`
+  
+  **Format:** Must be a valid HTTP/HTTPS URL with optional port
+  
+  **Examples:**
+  ```yaml
+  # Production endpoint
+  endpoint: https://otel.kloudmate.com:4318
+  
+  # Custom region
+  endpoint: https://otel.eu.kloudmate.com:4318
+  
+  # On-premises deployment
+  endpoint: https://otel.company.internal:4318
+  
+  # Development/testing
+  endpoint: http://localhost:4318
+  ```
+</ParamField>
+
+<ParamField path="ConfigUpdateURL" type="string">
+  API endpoint for fetching configuration updates.
+  
+  **Sources:**
+  - CLI flag: `--update-endpoint`
+  - Environment: `KM_UPDATE_ENDPOINT`
+  - Config file: Not configurable via file
+  
+  **Default:** Auto-derived from `ExporterEndpoint`
+  
+  **Derivation Logic:**
+  The update URL is automatically constructed from the exporter endpoint:
+  - Extract root domain from exporter endpoint
+  - Prepend `api.` subdomain
+  - Append `/agents/config-check` path
+  
+  ```go
+  // Example: https://otel.kloudmate.com:4318
+  // Becomes: https://api.kloudmate.com/agents/config-check
+  ```
+  
+  See implementation in `~/workspace/source/internal/config/config.go:28-52`
+  
+  <Note>
+    Explicitly setting this value overrides the auto-derivation behavior.
+  </Note>
+</ParamField>
+
+### Update Behavior
+
+<ParamField path="ConfigCheckInterval" type="integer">
+  Interval in seconds between configuration update checks.
+  
+  **Sources:**
+  - CLI flag: `--config-check-interval`
+  - Environment: `KM_CONFIG_CHECK_INTERVAL`
+  - Config file: `interval` field (duration format)
+  
+  **Default:** `60` (seconds)
+  
+  **Range:** `10` to `3600` seconds recommended
+  
+  **Examples:**
+  ```yaml
+  # Config file format (duration)
+  interval: 10s
+  interval: 5m
+  interval: 1h
+  ```
+  
+  ```bash
+  # CLI/environment format (integer seconds)
+  --config-check-interval=60
+  export KM_CONFIG_CHECK_INTERVAL=300
+  ```
+  
+  <Info>
+    Lower intervals enable faster configuration updates but increase API requests. For production, `60-300` seconds is recommended.
+  </Info>
+</ParamField>
+
+### File Paths
+
+<ParamField path="AgentConfigPath" type="string">
+  Path to the agent configuration YAML file.
+  
+  **Sources:**
+  - CLI flag: `--agent-config`
+  - Environment: `KM_AGENT_CONFIG`
+  
+  **Platform Defaults:**
+  - Linux/Unix: Not used (flags/env only)
+  - macOS: Not used (flags/env only)
+  - Windows: Not used (flags/env only)
+  - Docker: Not used (flags/env only)
+  
+  <Note>
+    This parameter specifies where to find the agent config file for initial loading, not where to store runtime config.
+  </Note>
+</ParamField>
+
+<ParamField path="OtelConfigPath" type="string">
+  Path to the OpenTelemetry Collector configuration YAML file.
+  
+  **Sources:**
+  - CLI flag: `--config`
+  - Environment: `KM_COLLECTOR_CONFIG`
+  
+  **Platform Defaults:**
+  <Tabs>
+    <Tab title="Linux/Unix">
+      ```
+      /etc/kmagent/config.yaml
+      ```
+    </Tab>
+    <Tab title="macOS">
+      ```
+      /Library/Application Support/kmagent/config.yaml
+      ```
+    </Tab>
+    <Tab title="Windows">
+      ```
+      <executable-directory>\config.yaml
+      ```
+      Where `<executable-directory>` is the directory containing `kmagent.exe`.
+    </Tab>
+    <Tab title="Docker">
+      ```
+      /etc/kmagent/config.yaml
+      ```
+      Typically mounted from host or ConfigMap.
+    </Tab>
+  </Tabs>
+  
+  See implementation in `~/workspace/source/internal/config/config.go:54-70`
+</ParamField>
+
+### Docker Mode
+
+<ParamField path="DockerMode" type="boolean">
+  Enable Docker-specific configuration and monitoring.
+  
+  **Sources:**
+  - CLI flag: `--docker-mode`
+  - Environment: `KM_DOCKER_MODE`
+  
+  **Default:** `false`
+  
+  **Effects:**
+  - Uses Docker-specific collector configuration template
+  - Enables `docker_stats` receiver for container metrics
+  - Monitors Docker socket for container events
+  - Adjusts file paths for containerized environment
+  
+  **Example:**
+  ```bash
+  docker run -e KM_DOCKER_MODE=true \
+    -v /var/run/docker.sock:/var/run/docker.sock:ro \
+    kloudmate/km-agent:latest
+  ```
+</ParamField>
+
+<ParamField path="DockerEndpoint" type="string">
+  Docker daemon socket endpoint for container monitoring.
+  
+  **Sources:**
+  - CLI flag: `--docker-endpoint`
+  - Environment: `KM_DOCKER_ENDPOINT`
+  
+  **Default:** `unix:///var/run/docker.sock`
+  
+  **Formats:**
+  ```yaml
+  # Unix socket (default)
+  docker_endpoint: unix:///var/run/docker.sock
+  
+  # TCP endpoint
+  docker_endpoint: tcp://localhost:2375
+  
+  # TLS-enabled TCP
+  docker_endpoint: tcp://localhost:2376
+  ```
+  
+  <Warning>
+    Ensure the socket is mounted read-only in containers for security:
+    ```bash
+    -v /var/run/docker.sock:/var/run/docker.sock:ro
+    ```
+  </Warning>
+</ParamField>
+
+## Kubernetes Configuration
+
+For Kubernetes deployments, additional configuration is available:
+
+```go ~/workspace/source/internal/config/config_k8s.go:18-37
+type K8sAgentConfig struct {
+    Logger    *zap.SugaredLogger
+    K8sClient *kubernetes.Clientset
+    StopCh    chan struct{}
+    Version   string
+
+    OtelCollectorConfig map[string]interface{}
+    ExporterEndpoint    string
+    ConfigUpdateURL     string
+    APIKey              string
+    ConfigCheckInterval string
+    // Kubernetes specific
+    KubeNamespace           string
+    ClusterName             string
+    DeploymentMode          string
+    ConfigmapDaemonsetName  string
+    ConfigmapDeploymentName string
+    DaemonSetName           string
+    DeploymentName          string
+}
+```
+
+### Kubernetes-Specific Parameters
+
+<ParamField path="KubeNamespace" type="string">
+  Kubernetes namespace where the agent is deployed.
+  
+  **Environment:** `KM_NAMESPACE`
+  
+  **Default:** `km-agent`
+</ParamField>
+
+<ParamField path="ClusterName" type="string" required>
+  Unique identifier for the Kubernetes cluster.
+  
+  **Environment:** `KM_CLUSTER_NAME`
+  
+  **Usage:** Added as `k8s.cluster.name` attribute to all telemetry data.
+</ParamField>
+
+<ParamField path="DeploymentMode" type="string">
+  Kubernetes deployment mode for the agent.
+  
+  **Values:**
+  - `daemonset`: Node-level monitoring (default)
+  - `deployment`: Cluster-level monitoring
+  - `both`: Both DaemonSet and Deployment
+</ParamField>
+
+<ParamField path="ConfigmapDaemonsetName" type="string">
+  Name of ConfigMap containing DaemonSet collector configuration.
+  
+  **Default:** `km-daemonset-config`
+</ParamField>
+
+<ParamField path="ConfigmapDeploymentName" type="string">
+  Name of ConfigMap containing Deployment collector configuration.
+  
+  **Default:** `km-deployment-config`
+</ParamField>
+
+<ParamField path="DaemonSetName" type="string">
+  Name of the KloudMate agent DaemonSet.
+  
+  **Default:** `km-agent-daemonset`
+</ParamField>
+
+<ParamField path="DeploymentName" type="string">
+  Name of the KloudMate agent Deployment.
+  
+  **Default:** `km-agent-deployment`
+</ParamField>
+
+## Environment Variables Reference
+
+<Tabs>
+  <Tab title="Required">
+    ```bash
+    # Authentication
+    export KM_API_KEY="your-api-key"
+    
+    # Exporter endpoint
+    export KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+    ```
+  </Tab>
+  
+  <Tab title="Optional">
+    ```bash
+    # Configuration paths
+    export KM_AGENT_CONFIG="/path/to/agent-config.yaml"
+    export KM_COLLECTOR_CONFIG="/path/to/collector-config.yaml"
+    
+    # Update behavior
+    export KM_CONFIG_CHECK_INTERVAL="60"
+    export KM_UPDATE_ENDPOINT="https://api.kloudmate.com/agents/config-check"
+    
+    # Docker mode
+    export KM_DOCKER_MODE="true"
+    export KM_DOCKER_ENDPOINT="unix:///var/run/docker.sock"
+    ```
+  </Tab>
+  
+  <Tab title="Kubernetes">
+    ```bash
+    # Cluster identification
+    export KM_CLUSTER_NAME="production-cluster"
+    
+    # Namespace
+    export KM_NAMESPACE="km-agent"
+    
+    # Node identification (DaemonSet)
+    export KM_NODE_NAME="$(spec.nodeName)"
+    
+    # ConfigMap names
+    export KM_DAEMONSET_CONFIG="km-daemonset-config"
+    export KM_DEPLOYMENT_CONFIG="km-deployment-config"
+    ```
+  </Tab>
+</Tabs>
+
+## Configuration Examples
+
+### Minimal Configuration
+
+```yaml agent-config.yaml
+key: ${KM_API_KEY}
+endpoint: https://otel.kloudmate.com:4318
+```
+
+### Production Configuration
+
+```yaml agent-config.yaml
+# Authentication
+key: ${KM_API_KEY}
+
+# Endpoints
+endpoint: https://otel.kloudmate.com:4318
+
+# Update behavior
+interval: 300s  # 5 minutes
+
+# Debug output (development only)
+debug: none
+```
+
+### Docker Configuration
+
+```yaml agent-config.yaml
+key: ${KM_API_KEY}
+endpoint: https://otel.kloudmate.com:4318
+interval: 60s
+debug: basic
+```
+
+```bash Docker Compose
+services:
+  km-agent:
+    image: kloudmate/km-agent:latest
+    environment:
+      - KM_API_KEY=${KM_API_KEY}
+      - KM_COLLECTOR_ENDPOINT=https://otel.kloudmate.com:4318
+      - KM_DOCKER_MODE=true
+      - KM_CONFIG_CHECK_INTERVAL=60
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log:/var/log:ro
+      - ./agent-config.yaml:/etc/kmagent/agent-config.yaml:ro
+```
+
+### Kubernetes Configuration
+
+```yaml ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: km-agent-config
+  namespace: km-agent
+data:
+  agent-config.yaml: |
+    key: ${KM_API_KEY}
+    endpoint: https://otel.kloudmate.com:4318
+    interval: 120s
+```
+
+```yaml DaemonSet Environment
+env:
+  - name: KM_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: km-agent-secret
+        key: api-key
+  - name: KM_COLLECTOR_ENDPOINT
+    value: "https://otel.kloudmate.com:4318"
+  - name: KM_CLUSTER_NAME
+    value: "production-us-east-1"
+  - name: KM_NODE_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: spec.nodeName
+  - name: KM_NAMESPACE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
+```
+
+## Configuration Loading
+
+The agent loads configuration through the `LoadConfig()` method:
+
+```go ~/workspace/source/internal/config/config.go:73-117
+func (c *Config) LoadConfig() error {
+    // Set environment variables for collector
+    os.Setenv("KM_COLLECTOR_ENDPOINT", c.ExporterEndpoint)
+    os.Setenv("KM_API_KEY", c.APIKey)
+
+    // Auto-derive update URL if not set
+    if c.ConfigUpdateURL == "" {
+        c.ConfigUpdateURL = GetAgentConfigUpdaterURL(c.ExporterEndpoint)
+    }
+
+    // Determine config path based on platform
+    configPath := c.OtelConfigPath
+    if configPath == "" {
+        if c.DockerMode {
+            configPath = GetDockerConfigPath()
+        } else {
+            configPath = GetDefaultConfigPath()
+        }
+    }
+
+    c.OtelConfigPath = configPath
+
+    // Load config file if exists
+    if _, err := os.Stat(configPath); err == nil {
+        configData, err := os.ReadFile(configPath)
+        if err != nil {
+            return fmt.Errorf("failed to read config file: %w", err)
+        }
+
+        if err := yaml.Unmarshal(configData, c); err != nil {
+            return fmt.Errorf("failed to parse config file: %w", err)
+        }
+    } else if !os.IsNotExist(err) {
+        return fmt.Errorf("error checking config file: %w", err)
+    }
+
+    // Ensure config directory exists
+    configDir := filepath.Dir(configPath)
+    if err := os.MkdirAll(configDir, 0755); err != nil {
+        return fmt.Errorf("failed to create config directory: %w", err)
+    }
+
+    return nil
+}
+```
+
+## Validation
+
+The agent performs the following validation checks:
+
+<AccordionGroup>
+  <Accordion title="API Key Validation">
+    - Must be non-empty when connecting to authenticated endpoints
+    - No format restrictions (supports various key formats)
+    - Passed as `Authorization` header to all API requests
+  </Accordion>
+  
+  <Accordion title="Endpoint Validation">
+    - Must be a valid URL with HTTP or HTTPS scheme
+    - Port is optional (defaults to scheme default)
+    - Hostname must be resolvable
+    - Update URL is auto-derived if not explicitly set
+  </Accordion>
+  
+  <Accordion title="Interval Validation">
+    - Must be a positive integer (seconds)
+    - Recommended range: 10-3600 seconds
+    - Too low values may cause API rate limiting
+  </Accordion>
+  
+  <Accordion title="Path Validation">
+    - Configuration directory must be writable
+    - Parent directories are created automatically
+    - Collector config file must be valid YAML
+  </Accordion>
+</AccordionGroup>
+
+## Remote Configuration Updates
+
+The agent periodically checks for configuration updates:
+
+<Steps>
+  <Step title="Send Status Update">
+    POST request to `ConfigUpdateURL` with agent status:
+    ```json
+    {
+      "is_docker": false,
+      "hostname": "server-01",
+      "platform": "linux",
+      "architecture": "amd64",
+      "agent_version": "0.1.0",
+      "collector_version": "0.96.0",
+      "agent_status": "running",
+      "collector_status": "running",
+      "last_error_message": ""
+    }
+    ```
+    
+    See implementation in `~/workspace/source/internal/updater/updater.go:64-121`
+  </Step>
+  
+  <Step title="Receive Update Response">
+    API responds with update instructions:
+    ```json
+    {
+      "restart_required": true,
+      "config": {
+        "receivers": {...},
+        "processors": {...},
+        "exporters": {...},
+        "service": {...}
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="Apply Configuration">
+    If `restart_required` is true:
+    - Write new configuration to temporary file
+    - Atomically rename to actual config file
+    - Restart OpenTelemetry Collector with new config
+    
+    See implementation in `~/workspace/source/internal/updater/updater.go:123-159`
+  </Step>
+</Steps>
+
+<Warning>
+  Configuration updates are atomic operations. If an update fails, the previous configuration remains unchanged.
+</Warning>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Configuration Not Loading">
+    **Symptom:** Agent starts but doesn't use configuration file
+    
+    **Causes:**
+    - File doesn't exist at expected path
+    - Invalid YAML syntax
+    - Incorrect file permissions
+    
+    **Solution:**
+    ```bash
+    # Check file exists
+    ls -la /etc/kmagent/config.yaml
+    
+    # Validate YAML syntax
+    yamllint /etc/kmagent/config.yaml
+    
+    # Check permissions
+    chmod 644 /etc/kmagent/config.yaml
+    ```
+  </Accordion>
+  
+  <Accordion title="Environment Variables Not Expanded">
+    **Symptom:** Literal `${VAR}` appearing in configuration
+    
+    **Causes:**
+    - Environment variable not set
+    - Wrong syntax for variable expansion
+    
+    **Solution:**
+    ```bash
+    # Verify environment variables are set
+    env | grep KM_
+    
+    # Use correct syntax
+    endpoint: ${KM_COLLECTOR_ENDPOINT}        # Correct
+    endpoint: $KM_COLLECTOR_ENDPOINT          # Wrong
+    endpoint: {KM_COLLECTOR_ENDPOINT}         # Wrong
+    ```
+  </Accordion>
+  
+  <Accordion title="Remote Updates Not Working">
+    **Symptom:** Configuration never updates from server
+    
+    **Causes:**
+    - Update URL not reachable
+    - Invalid API key
+    - Firewall blocking outbound requests
+    
+    **Solution:**
+    ```bash
+    # Test connectivity
+    curl -X POST https://api.kloudmate.com/agents/config-check \
+      -H "Authorization: ${KM_API_KEY}" \
+      -H "Content-Type: application/json" \
+      -d '{"hostname":"test"}'
+    
+    # Check agent logs
+    journalctl -u kmagent -f | grep -i config
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Collector Configuration" icon="database" href="/api/collector-config">
+    Configure OpenTelemetry Collector pipelines
+  </Card>
+  <Card title="Configuration Structure" icon="sitemap" href="/api/config-structure">
+    Understand configuration architecture
+  </Card>
+</CardGroup>

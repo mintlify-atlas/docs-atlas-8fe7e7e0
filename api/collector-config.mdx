@@ -1,0 +1,1114 @@
+---
+title: 'Collector Configuration'
+description: 'Complete reference for OpenTelemetry Collector configuration in KloudMate Agent'
+icon: 'database'
+---
+
+## Overview
+
+The OpenTelemetry Collector configuration defines how telemetry data is received, processed, and exported. KloudMate Agent includes platform-optimized configurations for host monitoring, Docker containers, and Kubernetes clusters.
+
+<Note>
+  All collector configurations follow the standard [OpenTelemetry Collector configuration format](https://opentelemetry.io/docs/collector/configuration/).
+</Note>
+
+## Configuration Templates
+
+KloudMate Agent ships with three pre-configured templates:
+
+<CardGroup cols={3}>
+  <Card title="Host Mode" icon="server" href="#host-mode-configuration">
+    System monitoring for bare metal and VMs
+  </Card>
+  <Card title="Docker Mode" icon="docker" href="#docker-mode-configuration">
+    Container metrics and log collection
+  </Card>
+  <Card title="Kubernetes Mode" icon="dharmachakra" href="#kubernetes-mode-configuration">
+    Pod, container, and cluster monitoring
+  </Card>
+</CardGroup>
+
+## Configuration Structure
+
+Every collector configuration has four main sections:
+
+```yaml Basic Structure
+receivers:
+  # Components that receive telemetry data
+  
+processors:
+  # Components that transform telemetry data
+  
+exporters:
+  # Components that send telemetry data
+  
+service:
+  # Defines pipelines connecting receivers, processors, and exporters
+```
+
+## Host Mode Configuration
+
+Optimized for monitoring physical servers and virtual machines:
+
+```yaml ~/workspace/source/configs/host-col-config.yaml
+receivers:
+  hostmetrics:
+    collection_interval: 60s
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+      load:
+        cpu_average: true
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      filesystem:
+        metrics:
+          system.filesystem.usage:
+            enabled: true
+          system.filesystem.utilization:
+            enabled: true
+      disk: {}
+      network: {}            
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+```
+
+### Host Receivers
+
+<AccordionGroup>
+  <Accordion title="hostmetrics - System Metrics Collection">
+    Collects system-level metrics from the host.
+    
+    <ParamField path="collection_interval" type="duration" default="60s">
+      How often to collect metrics from the system.
+    </ParamField>
+    
+    <ParamField path="scrapers" type="object" required>
+      Individual metric scrapers to enable:
+      
+      **cpu**: CPU utilization and frequency
+      - `system.cpu.utilization`: Per-core and total CPU usage
+      - `system.cpu.frequency`: Current CPU frequency
+      - `system.cpu.logical.count`: Number of logical CPUs
+      
+      **load**: System load averages
+      - `system.cpu.load_average.1m`: 1-minute load average
+      - `system.cpu.load_average.5m`: 5-minute load average
+      - `system.cpu.load_average.15m`: 15-minute load average
+      
+      **memory**: RAM utilization
+      - `system.memory.usage`: Memory used by state (used, cached, free, etc.)
+      - `system.memory.utilization`: Memory utilization percentage
+      
+      **filesystem**: Disk usage
+      - `system.filesystem.usage`: Bytes used per mount point
+      - `system.filesystem.utilization`: Disk utilization percentage
+      
+      **disk**: Disk I/O
+      - `system.disk.io`: Read/write bytes
+      - `system.disk.operations`: Read/write operations
+      
+      **network**: Network I/O
+      - `system.network.io`: Bytes transmitted/received
+      - `system.network.packets`: Packets transmitted/received
+      - `system.network.errors`: Network errors
+    </ParamField>
+  </Accordion>
+  
+  <Accordion title="otlp - Application Telemetry Receiver">
+    Receives telemetry from instrumented applications via OTLP protocol.
+    
+    <ParamField path="protocols.grpc.endpoint" type="string" default="0.0.0.0:4317">
+      gRPC endpoint for OTLP protocol.
+    </ParamField>
+    
+    <ParamField path="protocols.http.endpoint" type="string" default="0.0.0.0:4318">
+      HTTP endpoint for OTLP protocol.
+    </ParamField>
+    
+    **Use cases:**
+    - Receiving traces from OpenTelemetry SDKs
+    - Receiving metrics from application exporters
+    - Receiving logs from log forwarders
+  </Accordion>
+</AccordionGroup>
+
+### Host Processors
+
+```yaml ~/workspace/source/configs/host-col-config.yaml:44-102
+processors:
+  batch:
+    send_batch_size: 10000
+    timeout: 10s
+  resourcedetection:
+    detectors: [system]
+    system:
+      resource_attributes:
+        host.name:
+          enabled: true
+        host.id:
+          enabled: true
+        os.type:
+          enabled: false
+  resource:
+    attributes:
+      - key: service.name
+        action: insert
+        from_attribute: host.name
+  cumulativetodelta:
+    include:
+      match_type: strict
+      metrics:
+        - system.network.io
+        - system.disk.io
+        - system.disk.operations.rate
+        - system.network.packets.rate
+        - system.network.errors.rate
+        - system.network.dropped.rate
+  deltatorate:
+    metrics:
+      - system.network.io
+      - system.disk.io
+      - system.disk.operations.rate
+      - system.network.packets.rate
+      - system.network.errors.rate
+      - system.network.dropped.rate
+```
+
+<AccordionGroup>
+  <Accordion title="batch - Batching Processor">
+    Buffers telemetry data before sending to reduce network overhead.
+    
+    <ParamField path="send_batch_size" type="integer" default="8192">
+      Number of spans/metrics/logs to batch before sending.
+    </ParamField>
+    
+    <ParamField path="timeout" type="duration" default="200ms">
+      Maximum time to wait before sending a batch (even if incomplete).
+    </ParamField>
+    
+    **Optimization:** Higher batch sizes reduce network overhead but increase memory usage and latency.
+  </Accordion>
+  
+  <Accordion title="resourcedetection - Resource Detection">
+    Automatically detects and adds resource attributes from the environment.
+    
+    <ParamField path="detectors" type="array" required>
+      List of detection methods: `system`, `env`, `docker`, `gcp`, `aws`, `azure`
+    </ParamField>
+    
+    **Detected attributes:**
+    - `host.name`: Hostname from OS
+    - `host.id`: Unique host identifier
+    - `host.arch`: CPU architecture
+    - `os.type`: Operating system type
+  </Accordion>
+  
+  <Accordion title="resource - Resource Manipulation">
+    Adds, updates, or deletes resource attributes.
+    
+    ```yaml
+    resource:
+      attributes:
+        - key: service.name
+          action: insert
+          from_attribute: host.name
+        - key: environment
+          action: insert
+          value: production
+    ```
+    
+    **Actions:**
+    - `insert`: Add attribute if not exists
+    - `update`: Update attribute if exists
+    - `upsert`: Insert or update
+    - `delete`: Remove attribute
+  </Accordion>
+  
+  <Accordion title="cumulativetodelta - Cumulative to Delta Conversion">
+    Converts cumulative metrics (counters) to delta values for rate calculation.
+    
+    <ParamField path="include.metrics" type="array" required>
+      List of metric names to convert.
+    </ParamField>
+    
+    **Required for:** Network I/O, disk I/O, and other counter metrics that need rate calculation.
+  </Accordion>
+  
+  <Accordion title="deltatorate - Delta to Rate Conversion">
+    Converts delta values to per-second rates.
+    
+    **Example:** Converts "bytes transferred in last minute" to "bytes per second".
+  </Accordion>
+  
+  <Accordion title="transform - Metric Transformation">
+    Advanced metric manipulation using transformation language.
+    
+    ```yaml
+    transform/ratecalculation/copymetric:
+      error_mode: ignore
+      metric_statements:
+        - context: metric
+          statements:
+            - copy_metric(name="system.network.io.rate") where metric.name == "system.network.io"
+    ```
+    
+    See full implementation in `~/workspace/source/configs/host-col-config.yaml:81-102`
+  </Accordion>
+</AccordionGroup>
+
+### Host Exporters
+
+```yaml ~/workspace/source/configs/host-col-config.yaml:32-42
+exporters:
+  debug:
+    verbosity: basic
+  otlphttp:
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 10000
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    headers:
+        Authorization: ${env:KM_API_KEY}
+```
+
+<AccordionGroup>
+  <Accordion title="debug - Debug Exporter">
+    Logs telemetry data to console for debugging.
+    
+    <ParamField path="verbosity" type="string" default="basic">
+      Logging verbosity: `basic`, `normal`, `detailed`
+    </ParamField>
+    
+    <Warning>
+      Disable in production to avoid performance impact.
+    </Warning>
+  </Accordion>
+  
+  <Accordion title="otlphttp - OTLP HTTP Exporter">
+    Sends telemetry to KloudMate backend via OTLP/HTTP protocol.
+    
+    <ParamField path="endpoint" type="string" required>
+      Backend endpoint URL. Uses `${env:KM_COLLECTOR_ENDPOINT}` environment variable.
+    </ParamField>
+    
+    <ParamField path="headers" type="object">
+      HTTP headers sent with every request. Typically includes `Authorization` for API key.
+    </ParamField>
+    
+    <ParamField path="sending_queue.enabled" type="boolean" default="true">
+      Enable persistent queue for retry on failure.
+    </ParamField>
+    
+    <ParamField path="sending_queue.num_consumers" type="integer" default="10">
+      Number of parallel workers sending data.
+    </ParamField>
+    
+    <ParamField path="sending_queue.queue_size" type="integer" default="5000">
+      Maximum number of batches to queue before dropping.
+    </ParamField>
+  </Accordion>
+</AccordionGroup>
+
+### Host Pipelines
+
+```yaml ~/workspace/source/configs/host-col-config.yaml:107-124
+service:
+  telemetry:
+    metrics:
+      level: none
+  pipelines:
+    metrics:
+      receivers: [otlp, hostmetrics]
+      processors: [resourcedetection, resource, cumulativetodelta, deltatorate, transform/ratecalculation/sumtogauge, transform/ratecalculation/copymetric, batch]
+      exporters: [debug, otlphttp]
+    logs:
+      receivers: [otlp]
+      processors: [resourcedetection, resource, batch]
+      exporters: [debug, otlphttp]
+    traces:
+      receivers: [otlp]
+      processors: [resourcedetection, resource, batch]
+      exporters: [debug, otlphttp]
+```
+
+## Docker Mode Configuration
+
+Optimized for monitoring Docker containers and host system:
+
+```yaml ~/workspace/source/configs/docker-col-config.yaml:22-25
+receivers:
+  docker_stats:
+    endpoint: "unix:///var/run/docker.sock"
+    collection_interval: 60s
+    timeout: 10s
+```
+
+### Docker-Specific Receivers
+
+<AccordionGroup>
+  <Accordion title="docker_stats - Container Metrics">
+    Collects metrics from running Docker containers via Docker API.
+    
+    <ParamField path="endpoint" type="string" required>
+      Docker daemon socket endpoint.
+      
+      **Default:** `unix:///var/run/docker.sock`
+    </ParamField>
+    
+    <ParamField path="collection_interval" type="duration" default="60s">
+      How often to collect container metrics.
+    </ParamField>
+    
+    <ParamField path="timeout" type="duration" default="10s">
+      Timeout for Docker API requests.
+    </ParamField>
+    
+    **Collected metrics:**
+    - `container.cpu.usage.total`: Container CPU usage
+    - `container.memory.usage.total`: Container memory usage
+    - `container.memory.usage.limit`: Container memory limit
+    - `container.network.io.usage.rx_bytes`: Network bytes received
+    - `container.network.io.usage.tx_bytes`: Network bytes transmitted
+    - `container.blockio.io_service_bytes_recursive`: Disk I/O
+    
+    <Warning>
+      Requires Docker socket to be mounted: `-v /var/run/docker.sock:/var/run/docker.sock:ro`
+    </Warning>
+  </Accordion>
+  
+  <Accordion title="filelog - Container Log Collection">
+    Collects logs from container log files and system logs.
+    
+    ```yaml ~/workspace/source/configs/docker-col-config.yaml:3-20
+    filelog:
+      include:
+        - /var/log/**/*.log
+        - /var/lib/docker/containers/**/*.log*
+        - ${env:FILELOG_PATHS}
+      exclude:
+        - /var/log/kmagent*/**/*.log
+        - '**/*.gz'
+        - '**/*.zip'
+        - '**/*.tar'
+        - '**/*.xz'
+        - '**/.*'
+        - '**/*.tmp'
+        - '**/*~'
+      include_file_name_resolved: true
+      include_file_path: true
+      include_file_path_resolved: true
+      max_log_size: "1MiB"
+    ```
+    
+    <ParamField path="include" type="array" required>
+      Glob patterns for log files to monitor.
+    </ParamField>
+    
+    <ParamField path="exclude" type="array">
+      Glob patterns for log files to ignore.
+    </ParamField>
+    
+    <ParamField path="max_log_size" type="string" default="1MiB">
+      Maximum size of a single log entry.
+    </ParamField>
+  </Accordion>
+  
+  <Accordion title="hostmetrics - Host System Metrics">
+    Collects host-level metrics from the Docker host.
+    
+    ```yaml ~/workspace/source/configs/docker-col-config.yaml:27-85
+    hostmetrics:
+      collection_interval: 60s
+      root_path: /hostfs
+      scrapers:
+        cpu:
+        memory:
+        disk:
+        network:
+        filesystem:
+          exclude_fs_types:
+            fs_types:
+              - autofs
+              - binfmt_misc
+              - overlay
+              - proc
+              - sysfs
+          exclude_mount_points:
+            mount_points:
+              - /dev/*
+              - /sys/*
+              - /var/lib/docker/*
+    ```
+    
+    <ParamField path="root_path" type="string" default="/">
+      Root filesystem path. In Docker, the host filesystem is typically mounted at `/hostfs`.
+    </ParamField>
+    
+    <Warning>
+      Requires host filesystem mount: `-v /:/hostfs:ro`
+    </Warning>
+  </Accordion>
+</AccordionGroup>
+
+### Docker Pipelines
+
+```yaml ~/workspace/source/configs/docker-col-config.yaml:162-170
+service:
+  pipelines:
+    metrics:
+      receivers: [hostmetrics, docker_stats]
+      processors: [resourcedetection, resource, cumulativetodelta, deltatorate, transform/ratecalculation/sumtogauge, transform/ratecalculation/copymetric, batch]
+      exporters: [otlphttp, debug]
+    logs:
+      receivers: [filelog]
+      processors: [resourcedetection, resource, batch]
+      exporters: [otlphttp, debug]
+```
+
+## Kubernetes Mode Configuration
+
+Optimized for Kubernetes cluster monitoring via DaemonSet:
+
+### Kubernetes Receivers
+
+<AccordionGroup>
+  <Accordion title="kubeletstats - Pod & Container Metrics">
+    Collects metrics from Kubelet Stats API.
+    
+    ```yaml ~/workspace/source/configs/daemonset-col-config.yaml:511-543
+    kubeletstats:
+      auth_type: serviceAccount
+      collection_interval: 30s
+      endpoint: ${env:KM_NODE_NAME}:10250
+      extra_metadata_labels:
+        - container.id
+      insecure_skip_verify: true
+      k8s_api_config:
+        auth_type: serviceAccount
+      metric_groups:
+        - volume
+        - node
+        - pod
+        - container
+      metrics:
+        k8s.container.cpu_limit_utilization:
+          enabled: true
+        k8s.container.cpu_request_utilization:
+          enabled: true
+        k8s.container.memory_limit_utilization:
+          enabled: true
+        k8s.container.memory_request_utilization:
+          enabled: true
+    ```
+    
+    <ParamField path="auth_type" type="string" default="serviceAccount">
+      Authentication method for Kubelet API: `serviceAccount`, `tls`, `none`
+    </ParamField>
+    
+    <ParamField path="endpoint" type="string" required>
+      Kubelet endpoint. Uses `${env:KM_NODE_NAME}:10250` to connect to local node's Kubelet.
+    </ParamField>
+    
+    <ParamField path="metric_groups" type="array" required>
+      Groups of metrics to collect: `node`, `pod`, `container`, `volume`
+    </ParamField>
+    
+    **Collected metrics:**
+    - `k8s.node.cpu.utilization`: Node CPU usage
+    - `k8s.node.memory.usage`: Node memory usage
+    - `k8s.pod.cpu.utilization`: Pod CPU usage
+    - `k8s.pod.memory.usage`: Pod memory usage
+    - `k8s.container.cpu.utilization`: Container CPU usage
+    - `k8s.container.memory.usage`: Container memory usage
+    - `k8s.volume.available`: Volume available bytes
+    - `k8s.volume.capacity`: Volume total capacity
+  </Accordion>
+  
+  <Accordion title="filelog/containers - Pod Log Collection">
+    Collects logs from Kubernetes pod containers.
+    
+    ```yaml ~/workspace/source/configs/daemonset-col-config.yaml:248-257
+    filelog/containers:
+      exclude:
+        - /**/*.gz
+        - /var/log/pods/km-agent_*/**/*.log
+        - ${env:KM_XLOG_PATHS:-/___no_exclude___}
+      include:
+        - /var/log/pods/*/*/*.log
+      include_file_name_resolved: true
+      include_file_path: true
+      include_file_path_resolved: true
+      max_log_size: 1MiB
+    ```
+    
+    <ParamField path="include" type="array" required>
+      Glob patterns for pod log files. Default: `/var/log/pods/*/*/*.log`
+    </ParamField>
+    
+    <ParamField path="exclude" type="array">
+      Patterns to exclude (agent's own logs, compressed files, etc.)
+    </ParamField>
+    
+    **Log operators:** The receiver includes 20+ operators for parsing JSON logs, extracting timestamps, log levels, trace context, and more.
+    
+    See full implementation in `~/workspace/source/configs/daemonset-col-config.yaml:259-424`
+  </Accordion>
+  
+  <Accordion title="hostmetrics - Node System Metrics">
+    Collects host-level metrics from Kubernetes nodes.
+    
+    ```yaml ~/workspace/source/configs/daemonset-col-config.yaml:425-506
+    hostmetrics:
+      collection_interval: 60s
+      scrapers:
+        cpu:
+        disk:
+        filesystem:
+          exclude_fs_types:
+            fs_types:
+              - overlay
+              - proc
+              - sysfs
+          exclude_mount_points:
+            mount_points:
+              - /var/lib/kubelet/*
+        load:
+        memory:
+        network:
+        paging:
+        process:
+        processes:
+        system:
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Kubernetes Processors
+
+<AccordionGroup>
+  <Accordion title="k8sattributes - Kubernetes Metadata Enrichment">
+    Adds Kubernetes-specific attributes to telemetry data.
+    
+    ```yaml ~/workspace/source/configs/daemonset-col-config.yaml:80-108
+    k8sattributes:
+      auth_type: serviceAccount
+      passthrough: false
+      filter:
+        node_from_env_var: KM_NODE_NAME
+      extract:
+        metadata:
+          - k8s.pod.name
+          - k8s.pod.uid
+          - k8s.deployment.name
+          - k8s.namespace.name
+          - k8s.node.name
+          - k8s.pod.start_time
+          - k8s.statefulset.uid
+          - k8s.replicaset.uid
+          - k8s.daemonset.uid
+          - k8s.deployment.uid
+          - k8s.job.uid
+          - k8s.pod.ip
+      pod_association:
+        - sources:
+            - from: resource_attribute
+              name: k8s.pod.uid
+    ```
+    
+    <ParamField path="auth_type" type="string" default="serviceAccount">
+      Kubernetes API authentication method.
+    </ParamField>
+    
+    <ParamField path="filter.node_from_env_var" type="string">
+      Filter to only process pods from the node specified in this environment variable (for DaemonSet deployments).
+    </ParamField>
+    
+    <ParamField path="extract.metadata" type="array" required>
+      List of Kubernetes metadata attributes to extract and add to telemetry.
+    </ParamField>
+    
+    **Extracted attributes:**
+    - Pod: name, UID, namespace, IP, start time
+    - Owner: Deployment, DaemonSet, StatefulSet, ReplicaSet, Job
+    - Node: name
+    - Container: name
+  </Accordion>
+  
+  <Accordion title="attributes - Attribute Manipulation">
+    Adds or modifies specific attributes.
+    
+    ```yaml ~/workspace/source/configs/daemonset-col-config.yaml:10-46
+    attributes/metrics:
+      actions:
+        - key: k8s.cluster.name
+          value: ${env:KM_CLUSTER_NAME}
+          action: insert
+    
+    attributes/logs:
+      actions:
+        - key: k8s.cluster.name
+          from_attribute: k8s.cluster.name
+          action: upsert
+        - key: service.namespace
+          from_attribute: k8s.namespace.name
+          action: upsert
+    ```
+    
+    **Common use cases:**
+    - Add cluster name to all metrics
+    - Copy Kubernetes namespace to `service.namespace`
+    - Set service instance ID from pod UID
+  </Accordion>
+  
+  <Accordion title="metricstransform/system - Metric Transformations">
+    Advanced metric manipulation for Kubernetes-specific calculations.
+    
+    ```yaml ~/workspace/source/configs/daemonset-col-config.yaml:109-154
+    metricstransform/system:
+      transforms:
+        - action: insert
+          experimental_match_labels:
+            os.type: linux
+          include: system.memory.utilization
+          match_type: strict
+          new_name: system.memory.utilization.consumed
+          operations:
+            - action: aggregate_label_values
+              aggregated_values:
+                - used
+                - cached
+              aggregation_type: sum
+              label: state
+              new_value: consumed
+    ```
+    
+    **Example:** Combines "used" and "cached" memory states into a single "consumed" metric for Linux systems.
+  </Accordion>
+  
+  <Accordion title="transform - OTTL Transformations">
+    Uses OpenTelemetry Transformation Language for complex log and metric processing.
+    
+    ```yaml ~/workspace/source/configs/daemonset-col-config.yaml:193-206
+    transform/addservicename:
+      error_mode: ignore
+      log_statements:
+        - context: log
+          statements:
+            - set(attributes["service.name"], resource.attributes["k8s.container.name"]) where resource.attributes["k8s.container.name"] != nil
+    ```
+    
+    **Common transformations:**
+    - Extract service name from container name
+    - Copy attributes between resource and log/metric contexts
+    - Delete temporary attributes
+  </Accordion>
+  
+  <Accordion title="groupbyattrs - Attribute-based Grouping">
+    Groups logs by specific attributes for better correlation.
+    
+    ```yaml ~/workspace/source/configs/daemonset-col-config.yaml:77-79
+    groupbyattrs/filelog:
+      keys:
+        - k8s.pod.uid
+    ```
+    
+    **Use case:** Groups logs from the same pod together for better trace correlation.
+  </Accordion>
+</AccordionGroup>
+
+### Kubernetes Pipelines
+
+```yaml ~/workspace/source/configs/daemonset-col-config.yaml:544-602
+service:
+  pipelines:
+    logs/containers:
+      receivers:
+        - filelog/containers
+      processors:
+        - resource
+        - resource/add_node_name
+        - resource/cluster
+        - attributes/logs
+        - groupbyattrs/filelog
+        - k8sattributes
+        - transform/addservicename
+        - transform/copyservicefromlogattributes
+        - batch
+      exporters:
+        - otlphttp
+    
+    metrics/hostmetrics:
+      receivers:
+        - hostmetrics
+      processors:
+        - resourcedetection
+        - resource
+        - resource/hostmetrics
+        - resource/cluster
+        - k8sattributes
+        - transform/ostype
+        - attributes/logs
+        - metricstransform/system
+        - transform/deleteostype
+        - attributes/metrics
+        - transform/ratecalculation/copymetric
+        - cumulativetodelta
+        - deltatorate
+        - transform/ratecalculation/sumtogauge
+        - batch
+      exporters:
+        - otlphttp
+    
+    metrics/kubeletstats:
+      receivers:
+        - kubeletstats
+      processors:
+        - resourcedetection
+        - resource/add_node_name
+        - resource
+        - k8sattributes
+        - resource/cluster
+        - attributes/logs
+        - transform/ratecalculation/copymetric
+        - transform/ratecalculation/sumtogauge
+        - attributes/metrics
+        - batch
+      exporters:
+        - otlphttp
+```
+
+## Advanced Configuration
+
+### Custom Processors
+
+You can add custom processors to existing pipelines:
+
+<CodeGroup>
+```yaml Add Sampling
+processors:
+  probabilistic_sampler:
+    sampling_percentage: 10  # Sample 10% of traces
+
+service:
+  pipelines:
+    traces:
+      processors: [probabilistic_sampler, batch, resourcedetection]
+```
+
+```yaml Add Filtering
+processors:
+  filter/drop_debug_logs:
+    logs:
+      log_record:
+        - 'severity_number < SEVERITY_NUMBER_INFO'
+
+service:
+  pipelines:
+    logs:
+      processors: [filter/drop_debug_logs, batch]
+```
+
+```yaml Add Tail Sampling
+processors:
+  tail_sampling:
+    policies:
+      - name: errors-policy
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: slow-requests
+        type: latency
+        latency:
+          threshold_ms: 5000
+
+service:
+  pipelines:
+    traces:
+      processors: [tail_sampling, batch]
+```
+</CodeGroup>
+
+### Resource Detection
+
+Enable additional resource detectors:
+
+```yaml Extended Resource Detection
+processors:
+  resourcedetection:
+    detectors:
+      - env        # Environment variables
+      - system     # Host information
+      - docker     # Docker container info
+      - gcp        # Google Cloud Platform
+      - ec2        # AWS EC2
+      - ecs        # AWS ECS
+      - azure      # Azure
+    timeout: 5s
+    override: false
+```
+
+### Multi-Backend Exporters
+
+Send telemetry to multiple backends:
+
+```yaml Multiple Exporters
+exporters:
+  otlphttp/kloudmate:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    headers:
+      Authorization: ${env:KM_API_KEY}
+  
+  otlphttp/backup:
+    endpoint: https://backup-collector.company.com:4318
+    headers:
+      Authorization: ${env:BACKUP_API_KEY}
+  
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: km_agent
+
+service:
+  pipelines:
+    metrics:
+      receivers: [hostmetrics]
+      processors: [batch]
+      exporters: [otlphttp/kloudmate, otlphttp/backup, prometheus]
+```
+
+### Memory Limiter
+
+Prevent OOM by limiting memory usage:
+
+```yaml Memory Protection
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+service:
+  pipelines:
+    metrics:
+      processors: [memory_limiter, batch, resourcedetection]
+```
+
+## Configuration Validation
+
+Validate your configuration before deploying:
+
+<Steps>
+  <Step title="Syntax Validation">
+    Check YAML syntax:
+    ```bash
+    yamllint config.yaml
+    ```
+  </Step>
+  
+  <Step title="Schema Validation">
+    Test configuration loading:
+    ```bash
+    kmagent start --config=/path/to/config.yaml --dry-run
+    ```
+  </Step>
+  
+  <Step title="Component Validation">
+    Verify all referenced components are available:
+    ```bash
+    otelcol validate --config=/path/to/config.yaml
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Always validate configurations in a test environment before deploying to production.
+</Warning>
+
+## Environment Variable Reference
+
+All collector configurations use these environment variables:
+
+<Tabs>
+  <Tab title="Required">
+    ```bash
+    # Exporter endpoint
+    export KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+    
+    # API key for authentication
+    export KM_API_KEY="your-api-key"
+    ```
+  </Tab>
+  
+  <Tab title="Kubernetes">
+    ```bash
+    # Cluster identification
+    export KM_CLUSTER_NAME="production-cluster"
+    
+    # Node name (set by Kubernetes)
+    export KM_NODE_NAME="node-01"
+    
+    # Namespace (set by Kubernetes)
+    export KM_NAMESPACE="km-agent"
+    ```
+  </Tab>
+  
+  <Tab title="Optional">
+    ```bash
+    # Custom log paths (Docker mode)
+    export FILELOG_PATHS="/app/logs/**/*.log"
+    
+    # Exclude log paths (Kubernetes mode)
+    export KM_XLOG_PATHS="/var/log/sensitive/**/*.log"
+    ```
+  </Tab>
+</Tabs>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Collector Won't Start">
+    **Symptom:** Collector fails to start with configuration error
+    
+    **Common causes:**
+    - Invalid YAML syntax
+    - Referenced component not available in distribution
+    - Required environment variables not set
+    - Exporter endpoint unreachable
+    
+    **Solution:**
+    ```bash
+    # Check logs
+    journalctl -u kmagent -n 50 --no-pager
+    
+    # Validate YAML
+    yamllint /etc/kmagent/config.yaml
+    
+    # Test connectivity
+    curl -v ${KM_COLLECTOR_ENDPOINT}
+    ```
+  </Accordion>
+  
+  <Accordion title="No Metrics Being Received">
+    **Symptom:** Collector runs but no data appears in KloudMate
+    
+    **Common causes:**
+    - Receivers not configured correctly
+    - Pipeline not connecting receivers to exporters
+    - Batch processor timeout too long
+    - Network/firewall blocking exporter
+    
+    **Solution:**
+    ```bash
+    # Enable debug exporter temporarily
+    # Add to exporters section:
+    exporters:
+      debug:
+        verbosity: detailed
+    
+    # Add to pipeline:
+    service:
+      pipelines:
+        metrics:
+          exporters: [debug, otlphttp]
+    
+    # Check output
+    journalctl -u kmagent -f | grep -A 5 "ResourceMetrics"
+    ```
+  </Accordion>
+  
+  <Accordion title="High Memory Usage">
+    **Symptom:** Collector consuming excessive memory
+    
+    **Common causes:**
+    - Batch size too large
+    - Queue size too large
+    - No memory limiter configured
+    - Too many metrics/logs being collected
+    
+    **Solution:**
+    ```yaml
+    # Add memory limiter
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 512
+    
+    # Reduce batch size
+    processors:
+      batch:
+        send_batch_size: 1000
+        timeout: 5s
+    
+    # Reduce queue size
+    exporters:
+      otlphttp:
+        sending_queue:
+          queue_size: 1000
+    ```
+  </Accordion>
+  
+  <Accordion title="Kubernetes Attributes Not Appearing">
+    **Symptom:** Metrics/logs missing Kubernetes metadata
+    
+    **Common causes:**
+    - k8sattributes processor not in pipeline
+    - ServiceAccount lacks required permissions
+    - Pod association not configured
+    - Wrong node filter in DaemonSet
+    
+    **Solution:**
+    ```bash
+    # Check ServiceAccount permissions
+    kubectl describe serviceaccount km-agent -n km-agent
+    
+    # Check ClusterRole
+    kubectl describe clusterrole km-agent
+    
+    # Verify k8sattributes processor
+    kubectl logs -n km-agent ds/km-agent | grep k8sattributes
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Start Simple" icon="seedling">
+    Begin with minimal configuration and add components incrementally.
+  </Card>
+  <Card title="Use Memory Limiter" icon="memory">
+    Always configure memory_limiter processor to prevent OOM.
+  </Card>
+  <Card title="Batch Aggressively" icon="layer-group">
+    Use larger batch sizes (5000-10000) to reduce network overhead.
+  </Card>
+  <Card title="Monitor Collector" icon="chart-line">
+    Enable collector's own telemetry to monitor performance.
+  </Card>
+  <Card title="Test Changes" icon="flask">
+    Always validate configuration changes in non-production first.
+  </Card>
+  <Card title="Version Control" icon="code-branch">
+    Store configurations in Git for change tracking.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agent Configuration" icon="gear" href="/api/agent-config">
+    Configure agent behavior and authentication
+  </Card>
+  <Card title="Configuration Structure" icon="sitemap" href="/api/config-structure">
+    Understand configuration architecture
+  </Card>
+</CardGroup>

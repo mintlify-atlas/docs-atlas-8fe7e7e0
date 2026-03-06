@@ -1,0 +1,284 @@
+---
+title: Configuration Overview
+description: Understanding KloudMate Agent configuration architecture and options
+---
+
+The KloudMate Agent uses a multi-layered configuration system that combines local files, environment variables, and remote updates to provide flexible and dynamic observability.
+
+## Configuration Architecture
+
+The agent's configuration consists of three main components:
+
+<CardGroup cols={3}>
+  <Card title="Agent Configuration" icon="gear">
+    Controls agent behavior, update intervals, and service settings
+  </Card>
+  <Card title="Collector Configuration" icon="diagram-project">
+    OpenTelemetry collector pipeline configuration (receivers, processors, exporters)
+  </Card>
+  <Card title="Remote Updates" icon="cloud-arrow-down">
+    Dynamic configuration updates from KloudMate platform
+  </Card>
+</CardGroup>
+
+## Configuration Hierarchy
+
+The agent resolves configuration in the following order (highest to lowest priority):
+
+<Steps>
+  <Step title="CLI Flags">
+    Command-line arguments passed when starting the agent
+    ```bash
+    kmagent start --api-key=<key> --collector-endpoint=<url>
+    ```
+  </Step>
+  
+  <Step title="Environment Variables">
+    System environment variables prefixed with `KM_`
+    ```bash
+    export KM_API_KEY="your-api-key"
+    export KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+    ```
+  </Step>
+  
+  <Step title="Agent Config File">
+    YAML file specified via `--agent-config` flag or `KM_AGENT_CONFIG` environment variable
+    ```yaml
+    key: ${KM_API_KEY}
+    endpoint: https://otel.kloudmate.com:4318
+    interval: 10s
+    debug: basic
+    ```
+  </Step>
+  
+  <Step title="Remote Configuration">
+    Configuration fetched from KloudMate platform (updates collector config dynamically)
+  </Step>
+  
+  <Step title="Default Values">
+    Built-in defaults defined in the source code
+  </Step>
+</Steps>
+
+## Configuration File Locations
+
+Default configuration paths vary by deployment mode and operating system:
+
+### Host Deployment
+
+<CodeGroup>
+```bash Linux
+# Agent configuration
+/etc/kmagent/config.yaml
+
+# Collector configuration
+/etc/kmagent/otel-config.yaml
+```
+
+```bash macOS
+# Agent configuration
+/Library/Application Support/kmagent/config.yaml
+
+# Collector configuration
+/Library/Application Support/kmagent/otel-config.yaml
+```
+
+```bash Windows
+# Agent configuration
+%ProgramFiles%\kmagent\config.yaml
+
+# Collector configuration
+%ProgramFiles%\kmagent\otel-config.yaml
+```
+</CodeGroup>
+
+### Docker Deployment
+
+```bash
+# Both configurations mounted at
+/etc/kmagent/config.yaml
+```
+
+### Kubernetes Deployment
+
+```bash
+# Daemonset collector config
+ConfigMap: km-agent-configmap-daemonset
+
+# Deployment collector config
+ConfigMap: km-agent-configmap-deployment
+```
+
+## Configuration Files
+
+The agent uses different default configurations based on the deployment mode:
+
+<CardGroup cols={3}>
+  <Card title="Host Mode" icon="server" href="/configuration/opentelemetry-components#host-configuration">
+    `host-col-config.yaml` - Optimized for bare metal and VM deployments
+  </Card>
+  <Card title="Docker Mode" icon="docker" href="/configuration/opentelemetry-components#docker-configuration">
+    `docker-col-config.yaml` - Includes Docker stats receiver and container log collection
+  </Card>
+  <Card title="Kubernetes Mode" icon="dharmachakra" href="/configuration/opentelemetry-components#kubernetes-configuration">
+    `daemonset-col-config.yaml` - Node-level monitoring with kubelet stats
+  </Card>
+</CardGroup>
+
+## Key Configuration Parameters
+
+### Authentication & Connectivity
+
+<ParamField path="KM_API_KEY" type="string" required>
+  API key for authenticating with the KloudMate platform. Obtain from [Settings](https://app.kloudmate.com/settings/).
+</ParamField>
+
+<ParamField path="KM_COLLECTOR_ENDPOINT" type="string" default="https://otel.kloudmate.com:4318">
+  OTLP/HTTP endpoint where telemetry data is sent.
+</ParamField>
+
+### Update Configuration
+
+<ParamField path="KM_CONFIG_CHECK_INTERVAL" type="integer" default="60">
+  Interval in seconds between configuration update checks.
+</ParamField>
+
+<ParamField path="KM_UPDATE_ENDPOINT" type="string" default="https://api.kloudmate.com/agents/config-check">
+  Endpoint for fetching configuration updates. Auto-derived from collector endpoint if not set.
+</ParamField>
+
+### Deployment Mode
+
+<ParamField path="KM_DOCKER_MODE" type="boolean" default="false">
+  Enable Docker-specific configuration and receivers.
+</ParamField>
+
+<ParamField path="KM_CLUSTER_NAME" type="string">
+  Kubernetes cluster name (required for Kubernetes deployments).
+</ParamField>
+
+## Configuration Validation
+
+The agent validates configuration on startup:
+
+<CodeGroup>
+```go config.go
+// LoadConfig loads the configuration from CLI flags, environment variables, and config file
+func (c *Config) LoadConfig() error {
+    os.Setenv("KM_COLLECTOR_ENDPOINT", c.ExporterEndpoint)
+    os.Setenv("KM_API_KEY", c.APIKey)
+
+    if c.ConfigUpdateURL == "" {
+        c.ConfigUpdateURL = GetAgentConfigUpdaterURL(c.ExporterEndpoint)
+    }
+
+    // Default config file path based on OS
+    configPath := c.OtelConfigPath
+    if configPath == "" {
+        if c.DockerMode {
+            configPath = GetDockerConfigPath()
+        } else {
+            configPath = GetDefaultConfigPath()
+        }
+    }
+
+    c.OtelConfigPath = configPath
+    
+    // Load config file if exists
+    if _, err := os.Stat(configPath); err == nil {
+        configData, err := os.ReadFile(configPath)
+        if err != nil {
+            return fmt.Errorf("failed to read config file: %w", err)
+        }
+
+        if err := yaml.Unmarshal(configData, c); err != nil {
+            return fmt.Errorf("failed to parse config file: %w", err)
+        }
+    }
+
+    return nil
+}
+```
+</CodeGroup>
+
+## Environment Variable Expansion
+
+Configuration files support environment variable expansion using the `${env:VAR_NAME}` syntax:
+
+```yaml
+exporters:
+  otlphttp:
+    endpoint: ${env:KM_COLLECTOR_ENDPOINT}
+    headers:
+      Authorization: ${env:KM_API_KEY}
+```
+
+This allows sensitive values like API keys to be injected at runtime without storing them in configuration files.
+
+<Note>
+  Environment variables are expanded by the OpenTelemetry Collector at startup. If a variable is not set, the collector will fail to start.
+</Note>
+
+## Configuration Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Environment Variables for Secrets">
+    Never hardcode API keys or sensitive credentials in configuration files. Always use environment variable expansion:
+    
+    ```yaml
+    # Good
+    headers:
+      Authorization: ${env:KM_API_KEY}
+    
+    # Bad
+    headers:
+      Authorization: km_1234567890abcdef
+    ```
+  </Accordion>
+
+  <Accordion title="Leverage Remote Configuration">
+    Use the remote configuration feature to manage collector pipelines centrally:
+    - Reduces manual configuration management
+    - Enables dynamic updates without agent restarts
+    - Supports A/B testing and gradual rollouts
+  </Accordion>
+
+  <Accordion title="Monitor Configuration Updates">
+    Track configuration changes through agent logs:
+    
+    ```
+    INFO  collector configuration updated  {"configPath": "/etc/kmagent/config.yaml"}
+    INFO  configuration changed, restarting collector
+    INFO  collector restarted successfully
+    ```
+  </Accordion>
+
+  <Accordion title="Test Configuration Changes">
+    Validate configuration files before deploying:
+    
+    ```bash
+    # Validate YAML syntax
+    yamllint /etc/kmagent/otel-config.yaml
+    
+    # Test with debug exporter
+    kmagent start --config=/etc/kmagent/otel-config.yaml
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="code" href="/configuration/environment-variables">
+    Complete reference of all environment variables
+  </Card>
+  <Card title="Remote Configuration" icon="cloud-arrow-down" href="/configuration/remote-config">
+    Learn how dynamic updates work
+  </Card>
+  <Card title="OpenTelemetry Components" icon="diagram-project" href="/configuration/opentelemetry-components">
+    Configure receivers, processors, and exporters
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/troubleshooting/common-issues">
+    Resolve configuration issues
+  </Card>
+</CardGroup>

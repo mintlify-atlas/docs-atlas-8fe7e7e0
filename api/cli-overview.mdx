@@ -1,0 +1,155 @@
+---
+title: CLI Overview
+description: Command-line interface tools for managing KloudMate agents
+icon: terminal
+---
+
+The KloudMate Agent project provides two command-line tools for deploying and managing OpenTelemetry collectors across different environments.
+
+## Available CLI Tools
+
+<CardGroup cols={2}>
+  <Card title="kmagent" icon="server" href="/api/kmagent">
+    General-purpose agent for VMs, bare metal, and Docker environments
+  </Card>
+  <Card title="kubeagent" icon="dharmachakra" href="/api/kubeagent">
+    Kubernetes-native agent with ConfigMap-based configuration
+  </Card>
+</CardGroup>
+
+## Key Differences
+
+| Feature | kmagent | kubeagent |
+|---------|---------|----------|
+| **Environment** | VMs, bare metal, Docker | Kubernetes only |
+| **Configuration** | File-based (YAML) + CLI flags | Environment variables + ConfigMap |
+| **Service Management** | System service support | Runs as pod/daemonset |
+| **Remote Config** | Polling-based updates | ConfigMap watch |
+| **Docker Mode** | Optional specialized mode | N/A |
+
+## Common Configuration
+
+Both agents share common configuration options:
+
+### Authentication
+
+<ParamField path="KM_API_KEY" type="string" required>
+  API key for authenticating with KloudMate services. Used to identify your agent and authorize configuration updates.
+</ParamField>
+
+### Collector Endpoint
+
+<ParamField path="KM_COLLECTOR_ENDPOINT" type="string" default="https://otel.kloudmate.com:4318">
+  OpenTelemetry exporter endpoint where telemetry data is sent. Supports HTTP/HTTPS protocols.
+</ParamField>
+
+### Configuration Updates
+
+<ParamField path="KM_CONFIG_CHECK_INTERVAL" type="integer" default="60">
+  Interval in seconds between checks for remote configuration updates. Set to `0` to disable automatic updates.
+</ParamField>
+
+## Installation Paths
+
+Default configuration file locations vary by operating system:
+
+<CodeGroup>
+
+```bash Linux
+/etc/kmagent/config.yaml
+```
+
+```bash macOS
+/Library/Application Support/kmagent/config.yaml
+```
+
+```powershell Windows
+%EXECUTABLE_DIR%\config.yaml
+```
+
+```bash Docker
+/etc/kmagent/config.yaml
+```
+
+</CodeGroup>
+
+<Note>
+  The configuration directory is automatically created if it doesn't exist, with `0755` permissions on Unix systems.
+</Note>
+
+## Configuration File Format
+
+Both agents use YAML configuration files. The CLI flags can also be specified in the agent configuration file:
+
+```yaml agent-config.yaml
+config: /path/to/otel-config.yaml
+collector-endpoint: https://otel.kloudmate.com:4318
+api-key: your-api-key-here
+config-check-interval: 60
+update-endpoint: https://api.kloudmate.com/agents/config-check
+```
+
+<Warning>
+  Never commit API keys to version control. Use environment variables or secure secret management for production deployments.
+</Warning>
+
+## Environment Variables
+
+All CLI flags can be set via environment variables with the `KM_` prefix:
+
+```bash
+export KM_API_KEY="your-api-key"
+export KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+export KM_CONFIG_CHECK_INTERVAL="60"
+```
+
+## Configuration Priority
+
+Configuration values are loaded in the following priority order (highest to lowest):
+
+<Steps>
+  <Step title="CLI Flags">
+    Command-line arguments take precedence over all other sources
+  </Step>
+  <Step title="Environment Variables">
+    Environment variables with `KM_` prefix override file values
+  </Step>
+  <Step title="Configuration File">
+    YAML file specified via `--agent-config` or default path
+  </Step>
+  <Step title="Default Values">
+    Built-in defaults are used if no other source provides a value
+  </Step>
+</Steps>
+
+## Version Information
+
+Both agents support the `--version` flag to display version information:
+
+```bash
+kmagent --version
+kmagent version 0.1.0
+```
+
+The version is also injected into telemetry data via the `KM_AGENT_VERSION` environment variable for tracking and debugging.
+
+## Logging
+
+The agents use structured JSON logging with automatic log rotation:
+
+- **Format**: JSON with ISO8601 timestamps
+- **Rotation**: 10MB max file size
+- **Retention**: 7 days, 1 backup file
+- **Compression**: Old logs are automatically compressed
+- **Output**: Both file and console (console shows debug level)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="kmagent Reference" icon="server" href="/api/kmagent">
+    Complete command reference for the general-purpose agent
+  </Card>
+  <Card title="kubeagent Reference" icon="dharmachakra" href="/api/kubeagent">
+    Kubernetes-specific agent documentation
+  </Card>
+</CardGroup>

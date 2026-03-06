@@ -1,0 +1,157 @@
+---
+title: Installation Overview
+description: Choose the right installation method for your environment
+icon: download
+---
+
+The KloudMate Agent is an OpenTelemetry Collector distribution designed for simplified deployment across multiple platforms. Choose the installation method that matches your infrastructure.
+
+## Supported Platforms
+
+The KloudMate Agent supports the following environments:
+
+<CardGroup cols={2}>
+  <Card title="Linux" icon="linux" href="/installation/linux">
+    Debian/Ubuntu and RHEL/CentOS systems with systemd
+  </Card>
+  <Card title="Docker" icon="docker" href="/installation/docker">
+    Containerized deployment for host-level monitoring
+  </Card>
+  <Card title="Kubernetes" icon="dharmachakra" href="/installation/kubernetes">
+    DaemonSet and Deployment for cluster monitoring
+  </Card>
+  <Card title="Windows" icon="windows" href="/installation/windows">
+    Windows Server 2016+ with service installation
+  </Card>
+</CardGroup>
+
+## Prerequisites
+
+Before installing the KloudMate Agent, ensure you have:
+
+### Required
+
+- **API Key**: Obtain from [KloudMate Settings](https://app.kloudmate.com/settings/)
+- **Collector Endpoint**: Default is `https://otel.kloudmate.com:4318`
+- **System Access**: Root/administrator privileges for installation
+
+### Platform-Specific Requirements
+
+<AccordionGroup>
+  <Accordion title="Linux">
+    - Supported OS: Debian, Ubuntu, RHEL, CentOS, Rocky, AlmaLinux, Fedora, Amazon Linux
+    - Architecture: x86_64 (amd64) or aarch64 (arm64)
+    - systemd for service management
+    - Package manager: apt-get, dnf, or yum
+  </Accordion>
+  
+  <Accordion title="Docker">
+    - Docker Engine installed and running
+    - Docker version 20.10+ recommended
+    - Access to `/var/run/docker.sock`
+    - Privileged container support (for host metrics)
+  </Accordion>
+  
+  <Accordion title="Kubernetes">
+    - Kubernetes 1.19+ cluster
+    - Helm 3.8+ installed
+    - kubectl access with cluster-admin permissions
+    - cert-manager (optional, can be installed via dependencies)
+  </Accordion>
+  
+  <Accordion title="Windows">
+    - Windows Server 2016 or later
+    - Windows 10/11 (64-bit)
+    - Administrator privileges
+    - .NET Framework 4.5+ (usually pre-installed)
+  </Accordion>
+</AccordionGroup>
+
+## Quick Start
+
+Get started with a one-line installation command for your platform:
+
+<CodeGroup>
+```bash Linux
+KM_API_KEY="<YOUR_API_KEY>" KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_linux.sh)"
+```
+
+```bash Docker
+KM_API_KEY="<YOUR_API_KEY>" KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_docker.sh)"
+```
+
+```bash Kubernetes
+# Install CRD first
+kubectl apply -f https://raw.githubusercontent.com/kloudmate/km-agent/refs/heads/develop/deployment/helm/km-kube-agent/crds/crd-otel-instrumentation.yaml
+
+# Install via Helm
+helm repo add kloudmate https://kloudmate.github.io/km-agent
+helm install kloudmate-release kloudmate/km-kube-agent \
+  --namespace km-agent --create-namespace \
+  --set API_KEY="<YOUR_API_KEY>" \
+  --set COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+  --set clusterName="my-cluster"
+```
+
+```powershell Windows
+# Download installer from releases page
+Invoke-WebRequest -Uri "https://github.com/kloudmate/km-agent/releases/latest/download/kmagent-setup.exe" -OutFile "kmagent-setup.exe"
+.\kmagent-setup.exe
+```
+</CodeGroup>
+
+## What Gets Installed
+
+The KloudMate Agent installation includes:
+
+- **OpenTelemetry Collector**: Core telemetry collection engine with custom distribution
+- **Agent Manager**: Lifecycle management and remote configuration capabilities
+- **Service/Container**: Platform-specific service registration (systemd, Docker daemon, Windows service)
+- **Configuration Files**: Default OpenTelemetry configuration with KloudMate extensions
+- **Auto-Instrumentation** (Kubernetes only): Automatic application instrumentation via operator
+
+## Architecture Modes
+
+The agent operates in different modes depending on the deployment environment:
+
+| Platform | Mode | Description |
+|----------|------|-------------|
+| Linux | Host Agent | Runs as systemd service, collects host metrics and logs |
+| Docker | Container Agent | Containerized with host volume mounts for system access |
+| Kubernetes | DaemonSet + Deployment | DaemonSet for node metrics, Deployment for cluster-level monitoring |
+| Windows | Service | Windows service for host monitoring |
+
+## Configuration Management
+
+<Note>
+The KloudMate Agent supports **remote configuration** through the KloudMate platform. After installation, you can manage agent configurations via the web interface without SSH access to your systems.
+</Note>
+
+Configuration updates are automatically synchronized based on the `KM_CONFIG_CHECK_INTERVAL` setting (default: 30s).
+
+## Next Steps
+
+Select your platform to continue with detailed installation instructions:
+
+<CardGroup cols={2}>
+  <Card title="Linux Installation" icon="linux" href="/installation/linux">
+    Step-by-step guide for Debian/Ubuntu and RHEL-based systems
+  </Card>
+  <Card title="Docker Installation" icon="docker" href="/installation/docker">
+    Deploy as a container with custom volume mounts
+  </Card>
+  <Card title="Kubernetes Installation" icon="dharmachakra" href="/installation/kubernetes">
+    Helm chart deployment with auto-instrumentation
+  </Card>
+  <Card title="Windows Installation" icon="windows" href="/installation/windows">
+    GUI installer for Windows systems
+  </Card>
+</CardGroup>
+
+## Getting Help
+
+If you encounter issues during installation:
+
+- Check the [Troubleshooting Guide](/operations/troubleshooting)
+- Review [GitHub Issues](https://github.com/kloudmate/km-agent/issues)
+- Contact support: support@kloudmate.com

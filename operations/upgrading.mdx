@@ -1,0 +1,645 @@
+---
+title: 'Upgrading'
+description: 'Upgrade KloudMate Agent to the latest version across all platforms'
+icon: 'arrow-up'
+---
+
+This guide covers upgrading the KloudMate Agent for each supported platform. Always review the [release notes](https://github.com/kloudmate/km-agent/releases) before upgrading.
+
+## Pre-Upgrade Checklist
+
+<Steps>
+  <Step title="Check Current Version">
+    Verify your current agent version:
+    
+    **Linux:**
+    ```bash
+    kmagent --version
+    dpkg -l | grep kmagent  # Debian/Ubuntu
+    rpm -q kmagent          # RHEL/CentOS
+    ```
+
+    **Docker:**
+    ```bash
+    docker inspect km-agent | grep Image
+    ```
+
+    **Kubernetes:**
+    ```bash
+    kubectl get pods -n km-agent -o jsonpath='{.items[0].spec.containers[0].image}'
+    helm list -n km-agent
+    ```
+  </Step>
+
+  <Step title="Review Release Notes">
+    Check for breaking changes at [GitHub Releases](https://github.com/kloudmate/km-agent/releases)
+  </Step>
+
+  <Step title="Backup Configuration">
+    **Linux:**
+    ```bash
+    sudo cp /etc/kmagent/config.yaml /etc/kmagent/config.yaml.backup
+    ```
+
+    **Kubernetes:**
+    ```bash
+    kubectl get configmap -n km-agent km-agent-configmap-daemonset -o yaml > configmap-backup.yaml
+    helm get values kloudmate-release -n km-agent > values-backup.yaml
+    ```
+  </Step>
+
+  <Step title="Verify Connectivity">
+    Ensure the system can reach GitHub and KloudMate endpoints:
+    ```bash
+    curl -I https://api.github.com/repos/kloudmate/km-agent/releases/latest
+    curl -I https://otel.kloudmate.com:4318
+    ```
+  </Step>
+</Steps>
+
+## Linux Upgrade
+
+The Linux installation script automatically fetches and installs the latest version.
+
+### Automatic Upgrade (Recommended)
+
+<Note>
+The installation script handles upgrades automatically. It will:
+1. Fetch the latest release from GitHub
+2. Download the appropriate package for your architecture
+3. Install/upgrade the package
+4. Restart the service with existing configuration
+</Note>
+
+```bash scripts/install_linux.sh
+KM_API_KEY="<YOUR_API_KEY>" KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_linux.sh)"
+```
+
+The script detects your OS and architecture:
+
+```bash scripts/install_linux.sh
+ARCH=$(uname -m)
+DEB_ARCH="amd64"
+RPM_ARCH="x86_64"
+
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+  DEB_ARCH="arm64"
+  RPM_ARCH="aarch64"
+fi
+```
+
+### Manual Upgrade
+
+If you prefer to upgrade manually:
+
+<Tabs>
+  <Tab title="Debian/Ubuntu">
+    **Download Package:**
+    ```bash
+    wget https://github.com/kloudmate/km-agent/releases/download/v1.2.0/kmagent_1.2.0_amd64.deb
+    ```
+
+    **Install:**
+    ```bash
+    sudo dpkg -i kmagent_1.2.0_amd64.deb
+    ```
+
+    **Restart Service:**
+    ```bash
+    sudo systemctl daemon-reexec
+    sudo systemctl restart kmagent
+    ```
+
+    **Verify:**
+    ```bash
+    kmagent --version
+    sudo systemctl status kmagent
+    ```
+  </Tab>
+
+  <Tab title="RHEL/CentOS">
+    **Download Package:**
+    ```bash
+    wget https://github.com/kloudmate/km-agent/releases/download/v1.2.0/kmagent-1.2.0.x86_64.rpm
+    ```
+
+    **Install:**
+    ```bash
+    sudo dnf install -y kmagent-1.2.0.x86_64.rpm
+    # or
+    sudo yum install -y kmagent-1.2.0.x86_64.rpm
+    ```
+
+    **Restart Service:**
+    ```bash
+    sudo systemctl daemon-reexec
+    sudo systemctl restart kmagent
+    ```
+
+    **Verify:**
+    ```bash
+    kmagent --version
+    sudo systemctl status kmagent
+    ```
+  </Tab>
+</Tabs>
+
+### Post-Upgrade Verification (Linux)
+
+<Steps>
+  <Step title="Check Service Status">
+    ```bash
+    sudo systemctl status kmagent
+    ```
+    Service should be **active (running)**
+  </Step>
+
+  <Step title="Verify Version">
+    ```bash
+    kmagent --version
+    ```
+  </Step>
+
+  <Step title="Check Logs">
+    ```bash
+    sudo journalctl -u kmagent -f
+    ```
+    Look for:
+    ```log
+    INFO agent start sequence initiated
+    INFO collector instance created, starting run loop
+    ```
+  </Step>
+
+  <Step title="Test Health Endpoint">
+    ```bash
+    curl http://localhost:13133/
+    ```
+    Should return **200 OK**
+  </Step>
+</Steps>
+
+## Docker Upgrade
+
+Docker upgrades involve pulling the latest image and recreating the container.
+
+### Automatic Upgrade (Recommended)
+
+Use the installation script to upgrade:
+
+```bash scripts/install_docker.sh
+KM_API_KEY="<YOUR_API_KEY>" KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_docker.sh)"
+```
+
+The script automatically:
+1. Pulls the latest image
+2. Stops and removes the old container
+3. Creates a new container with the updated image
+
+```bash scripts/install_docker.sh
+echo "📥 Pulling Docker image: $IMAGE_NAME..."
+docker pull $IMAGE_NAME
+
+echo "🛑 Stopping and removing any existing 'km-agent' container..."
+if [ "$(docker ps -aq -f name=km-agent)" ]; then
+    docker stop km-agent
+    docker rm km-agent
+fi
+```
+
+### Manual Upgrade
+
+<Steps>
+  <Step title="Pull Latest Image">
+    ```bash
+    docker pull ghcr.io/kloudmate/km-agent:latest
+    ```
+  </Step>
+
+  <Step title="Stop and Remove Old Container">
+    ```bash
+    docker stop km-agent
+    docker rm km-agent
+    ```
+  </Step>
+
+  <Step title="Create New Container">
+    ```bash
+    docker run -d \
+      --privileged \
+      --pid host \
+      --restart always \
+      --network host \
+      --name km-agent \
+      -e KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+      -e KM_API_KEY="<YOUR_API_KEY>" \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      -v /var/log:/var/log \
+      -v /var/lib/docker/containers:/var/lib/docker/containers:ro \
+      -v /:/hostfs:ro \
+      ghcr.io/kloudmate/km-agent:latest
+    ```
+  </Step>
+</Steps>
+
+### Post-Upgrade Verification (Docker)
+
+<Steps>
+  <Step title="Check Container Status">
+    ```bash
+    docker ps -f name=km-agent
+    ```
+    Container should be **Up**
+  </Step>
+
+  <Step title="Verify Image Version">
+    ```bash
+    docker inspect km-agent | grep Image
+    ```
+  </Step>
+
+  <Step title="Check Logs">
+    ```bash
+    docker logs km-agent --tail 50
+    ```
+    Look for successful startup messages
+  </Step>
+
+  <Step title="Test Health Endpoint">
+    ```bash
+    docker exec km-agent curl http://localhost:13133/
+    ```
+  </Step>
+</Steps>
+
+### Cleanup Old Images
+
+After successful upgrade, remove old images:
+
+```bash
+# List all km-agent images
+docker images | grep km-agent
+
+# Remove old images
+docker image prune -f
+```
+
+## Kubernetes Upgrade
+
+Kubernetes upgrades are managed through Helm.
+
+### Helm Upgrade
+
+<Note>
+The recommended approach is to upgrade via Helm, which handles rolling updates automatically.
+</Note>
+
+<Steps>
+  <Step title="Update Helm Repository">
+    ```bash
+    helm repo update kloudmate
+    ```
+  </Step>
+
+  <Step title="Check Available Versions">
+    ```bash
+    helm search repo kloudmate/km-kube-agent --versions
+    ```
+  </Step>
+
+  <Step title="Upgrade Release">
+    **Upgrade to latest:**
+    ```bash README.md
+    helm upgrade kloudmate-release kloudmate/km-kube-agent \
+      --namespace km-agent \
+      --reuse-values
+    ```
+
+    **Upgrade to specific version:**
+    ```bash
+    helm upgrade kloudmate-release kloudmate/km-kube-agent \
+      --namespace km-agent \
+      --version 1.2.0 \
+      --reuse-values
+    ```
+
+    **Upgrade with new values:**
+    ```bash
+    helm upgrade kloudmate-release kloudmate/km-kube-agent \
+      --namespace km-agent \
+      --set API_KEY="<YOUR_API_KEY>" \
+      --set COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+      --set clusterName="production-cluster"
+    ```
+  </Step>
+
+  <Step title="Monitor Rollout">
+    **DaemonSet:**
+    ```bash
+    kubectl rollout status daemonset/km-agent -n km-agent
+    ```
+
+    **Deployment:**
+    ```bash
+    kubectl rollout status deployment/km-agent-cluster -n km-agent
+    ```
+  </Step>
+</Steps>
+
+### Update Container Images Only
+
+If you only need to update container images:
+
+```bash
+kubectl set image daemonset/km-agent -n km-agent \
+  km-agent=ghcr.io/kloudmate/km-kube-agent:v1.2.0
+
+kubectl set image deployment/km-agent-cluster -n km-agent \
+  km-agent=ghcr.io/kloudmate/km-kube-agent:v1.2.0
+```
+
+### Post-Upgrade Verification (Kubernetes)
+
+<Steps>
+  <Step title="Check Pod Status">
+    ```bash
+    kubectl get pods -n km-agent
+    ```
+    All pods should be **Running** and **Ready**
+  </Step>
+
+  <Step title="Verify Image Versions">
+    ```bash
+    kubectl get pods -n km-agent -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
+    ```
+  </Step>
+
+  <Step title="Check Rollout History">
+    ```bash
+    kubectl rollout history daemonset/km-agent -n km-agent
+    kubectl rollout history deployment/km-agent-cluster -n km-agent
+    ```
+  </Step>
+
+  <Step title="Review Pod Logs">
+    ```bash
+    kubectl logs -n km-agent -l app.kubernetes.io/component=node-agent --tail=50
+    ```
+  </Step>
+
+  <Step title="Test Health Endpoint">
+    ```bash
+    kubectl exec -n km-agent ds/km-agent -- curl http://localhost:13133/
+    ```
+  </Step>
+</Steps>
+
+### Rollback (If Needed)
+
+If the upgrade causes issues:
+
+<Tabs>
+  <Tab title="Helm Rollback">
+    **View revision history:**
+    ```bash
+    helm history kloudmate-release -n km-agent
+    ```
+
+    **Rollback to previous:**
+    ```bash
+    helm rollback kloudmate-release -n km-agent
+    ```
+
+    **Rollback to specific revision:**
+    ```bash
+    helm rollback kloudmate-release 3 -n km-agent
+    ```
+  </Tab>
+
+  <Tab title="kubectl Rollback">
+    **DaemonSet:**
+    ```bash
+    kubectl rollout undo daemonset/km-agent -n km-agent
+    ```
+
+    **Deployment:**
+    ```bash
+    kubectl rollout undo deployment/km-agent-cluster -n km-agent
+    ```
+
+    **To specific revision:**
+    ```bash
+    kubectl rollout undo daemonset/km-agent --to-revision=2 -n km-agent
+    ```
+  </Tab>
+</Tabs>
+
+## Windows Upgrade
+
+<Warning>
+Windows upgrades require downloading and running the latest installer from the [releases page](https://github.com/kloudmate/km-agent/releases).
+</Warning>
+
+<Steps>
+  <Step title="Download Latest Installer">
+    Download the `.exe` installer from [GitHub Releases](https://github.com/kloudmate/km-agent/releases)
+  </Step>
+
+  <Step title="Stop Service">
+    ```powershell
+    Stop-Service -Name "KloudMate Agent"
+    ```
+  </Step>
+
+  <Step title="Run Installer">
+    Execute the downloaded installer. It will:
+    - Detect existing installation
+    - Preserve configuration
+    - Upgrade binaries
+    - Restart service
+  </Step>
+
+  <Step title="Verify Installation">
+    ```powershell
+    Get-Service -Name "KloudMate Agent"
+    ```
+  </Step>
+</Steps>
+
+## Upgrade Strategies
+
+### Zero-Downtime Upgrades (Kubernetes)
+
+For production environments, use rolling updates:
+
+```yaml deployment/helm/km-kube-agent/values.yaml
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+    maxSurge: 1
+```
+
+Helm automatically performs rolling updates for DaemonSets and Deployments.
+
+### Blue-Green Deployment (Kubernetes)
+
+For critical environments:
+
+<Steps>
+  <Step title="Deploy New Version to Test Namespace">
+    ```bash
+    helm install kloudmate-test kloudmate/km-kube-agent \
+      --namespace km-agent-test \
+      --create-namespace \
+      --set API_KEY="<YOUR_API_KEY>"
+    ```
+  </Step>
+
+  <Step title="Validate New Version">
+    Run tests against the test environment
+  </Step>
+
+  <Step title="Switch Traffic">
+    Update production namespace:
+    ```bash
+    helm upgrade kloudmate-release kloudmate/km-kube-agent \
+      --namespace km-agent \
+      --reuse-values
+    ```
+  </Step>
+
+  <Step title="Cleanup Test Environment">
+    ```bash
+    helm uninstall kloudmate-test -n km-agent-test
+    kubectl delete namespace km-agent-test
+    ```
+  </Step>
+</Steps>
+
+## Configuration Migration
+
+When upgrading between major versions, configuration may need migration.
+
+<Warning>
+**Configuration Management in Kubernetes:**
+
+Manually updating ConfigMaps is **not recommended**, as configurations may be overwritten by KloudMate API updates. Use the **KloudMate Agent Config Editor** web interface instead.
+</Warning>
+
+From the README:
+
+```markdown README.md
+⚠️ **Configuration Management**: Manually updating the ConfigMaps for the DaemonSet or Deployment agents is **not recommended**, as these configurations may be overwritten by updates sent from KloudMate APIs. The recommended approach is to use the **KloudMate Agent Config Editor**.
+```
+
+## Troubleshooting Upgrades
+
+### Upgrade Fails
+
+<AccordionGroup>
+  <Accordion title="Package Manager Errors (Linux)">
+    **Dependency conflicts:**
+    ```bash
+    # Debian/Ubuntu
+    sudo apt-get install -f -y
+
+    # RHEL/CentOS
+    sudo dnf distro-sync
+    ```
+  </Accordion>
+
+  <Accordion title="Helm Upgrade Failures">
+    **Check for failed resources:**
+    ```bash
+    kubectl get events -n km-agent --sort-by='.lastTimestamp'
+    ```
+
+    **Verify CRDs are up to date:**
+    ```bash
+    kubectl get crd instrumentations.opentelemetry.io -o yaml
+    ```
+  </Accordion>
+
+  <Accordion title="Image Pull Failures">
+    **Verify image exists:**
+    ```bash
+    docker pull ghcr.io/kloudmate/km-kube-agent:latest
+    ```
+
+    **Check network connectivity to ghcr.io**
+  </Accordion>
+</AccordionGroup>
+
+### Service Won't Start After Upgrade
+
+<Steps>
+  <Step title="Check Logs">
+    ```bash
+    # Linux
+    sudo journalctl -u kmagent -n 100
+
+    # Docker
+    docker logs km-agent --tail 100
+
+    # Kubernetes
+    kubectl logs -n km-agent <pod-name> --tail 100
+    ```
+  </Step>
+
+  <Step title="Verify Configuration">
+    Ensure configuration files weren't corrupted during upgrade
+  </Step>
+
+  <Step title="Check Permissions">
+    ```bash
+    # Linux
+    ls -la /usr/bin/kmagent
+    ls -la /etc/kmagent/config.yaml
+    ```
+  </Step>
+
+  <Step title="Rollback If Necessary">
+    Reinstall previous version or use Helm rollback
+  </Step>
+</Steps>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Test First" icon="flask">
+    Always test upgrades in non-production environments first
+  </Card>
+  
+  <Card title="Backup Configuration" icon="floppy-disk">
+    Save configuration files before upgrading
+  </Card>
+  
+  <Card title="Monitor After Upgrade" icon="chart-line">
+    Watch metrics and logs for 24 hours post-upgrade
+  </Card>
+  
+  <Card title="Plan Rollback" icon="rotate-left">
+    Have a rollback plan ready before upgrading
+  </Card>
+  
+  <Card title="Schedule Maintenance" icon="calendar">
+    Upgrade during low-traffic periods
+  </Card>
+  
+  <Card title="Document Changes" icon="file-lines">
+    Record version numbers and any issues encountered
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Monitoring" icon="heartbeat" href="/operations/monitoring">
+    Set up monitoring for the upgraded agent
+  </Card>
+  
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Resolve common issues after upgrade
+  </Card>
+</CardGroup>

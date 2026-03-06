@@ -1,0 +1,629 @@
+---
+title: kmagent
+description: General-purpose KloudMate agent for VMs, bare metal, and Docker
+icon: server
+---
+
+The `kmagent` is a general-purpose OpenTelemetry collector agent designed for deployment on virtual machines, bare metal servers, and Docker containers. It provides service management capabilities and supports both file-based and remote configuration.
+
+## Installation
+
+Refer to the [installation guides](/installation/overview) for platform-specific installation instructions.
+
+## Usage
+
+```bash
+kmagent [global options] command [command options] [arguments...]
+```
+
+## Commands
+
+### start
+
+Starts the KloudMate agent as a service.
+
+```bash
+kmagent start [options]
+```
+
+The start command:
+- Initializes the agent with the specified configuration
+- Creates a system service wrapper (using [kardianos/service](https://github.com/kardianos/service))
+- Starts the OpenTelemetry collector
+- Begins polling for remote configuration updates
+- Handles graceful shutdown on SIGINT/SIGTERM
+
+**Example:**
+
+```bash
+kmagent start --api-key="km_xxxxxxxxxxxxx" --config="/etc/kmagent/collector.yaml"
+```
+
+<Note>
+  The agent runs as a foreground service. Use your system's service manager (systemd, launchd, Windows Service) to run it as a background daemon.
+</Note>
+
+### stop
+
+Stops the running agent gracefully.
+
+```bash
+kmagent stop
+```
+
+The stop command:
+- Cancels the application context to signal shutdown
+- Provides 30-second timeout for graceful collector shutdown
+- Waits for all goroutines to complete
+- Ensures logs are flushed before exit
+
+**Example:**
+
+```bash
+kmagent stop
+```
+
+## Global Options
+
+### --agent-config
+
+<ParamField path="agent-config" type="string">
+  Path to the agent configuration YAML file. This file can contain all other configuration options.
+  
+  **Environment Variable:** `KM_AGENT_CONFIG`
+  
+  **Example:**
+  ```bash
+  kmagent start --agent-config="/etc/kmagent/agent-config.yaml"
+  ```
+</ParamField>
+
+### --config
+
+<ParamField path="config" type="string">
+  Path to the OpenTelemetry collector configuration file. This is the main collector config that defines receivers, processors, exporters, and pipelines.
+  
+  **Environment Variable:** `KM_COLLECTOR_CONFIG`
+  
+  **Default:** Platform-specific (see below)
+  
+  **Example:**
+  ```bash
+  kmagent start --config="/etc/kmagent/otel-config.yaml"
+  ```
+</ParamField>
+
+**Default Paths:**
+
+- **Linux/Unix:** `/etc/kmagent/config.yaml`
+- **macOS:** `/Library/Application Support/kmagent/config.yaml`
+- **Windows:** `<executable_dir>\config.yaml`
+- **Docker:** `/etc/kmagent/config.yaml` (when `--docker-mode` is enabled)
+
+### --collector-endpoint
+
+<ParamField path="collector-endpoint" type="string" default="https://otel.kloudmate.com:4318">
+  OpenTelemetry exporter endpoint where telemetry data (traces, metrics, logs) is sent. Must be a valid HTTP/HTTPS URL.
+  
+  **Environment Variable:** `KM_COLLECTOR_ENDPOINT`
+  
+  **Example:**
+  ```bash
+  kmagent start --collector-endpoint="https://otel.example.com:4318"
+  ```
+</ParamField>
+
+<Note>
+  This value is also set as the `KM_COLLECTOR_ENDPOINT` environment variable for use in OpenTelemetry collector configuration templates.
+</Note>
+
+### --api-key
+
+<ParamField path="api-key" type="string" required>
+  API key for authentication with KloudMate services. Required for remote configuration updates and telemetry export.
+  
+  **Environment Variable:** `KM_API_KEY`
+  
+  **Example:**
+  ```bash
+  kmagent start --api-key="km_xxxxxxxxxxxxx"
+  ```
+</ParamField>
+
+<Warning>
+  Store API keys securely. Never commit them to version control or expose them in logs. Use environment variables or secret management systems.
+</Warning>
+
+### --config-check-interval
+
+<ParamField path="config-check-interval" type="integer" default="60">
+  Interval in seconds to check for remote configuration updates. The agent polls the update endpoint at this interval.
+  
+  **Environment Variable:** `KM_CONFIG_CHECK_INTERVAL`
+  
+  **Example:**
+  ```bash
+  kmagent start --config-check-interval="120"
+  ```
+</ParamField>
+
+<Note>
+  Set to `0` to disable automatic configuration updates. The agent will only use the local configuration file.
+</Note>
+
+### --update-endpoint
+
+<ParamField path="update-endpoint" type="string" default="https://api.kloudmate.com/agents/config-check">
+  API endpoint for checking and retrieving remote configuration updates.
+  
+  **Environment Variable:** `KM_UPDATE_ENDPOINT`
+  
+  **Example:**
+  ```bash
+  kmagent start --update-endpoint="https://api.example.com/agents/config-check"
+  ```
+</ParamField>
+
+**Auto-derived URL:** If not specified, the update endpoint is automatically derived from the `--collector-endpoint` by extracting the root domain and prepending `api.`. For example:
+
+- `https://otel.kloudmate.com:4318` → `https://api.kloudmate.com/agents/config-check`
+- `https://otel.kloudmate.dev:4318` → `https://api.kloudmate.dev/agents/config-check`
+
+From `internal/config/config.go:28-52`:
+
+```go
+func GetAgentConfigUpdaterURL(collectorEndpoint string) string {
+	const fallbackURL = "https://api.kloudmate.com/agents/config-check"
+
+	u, _ := url.Parse(collectorEndpoint)
+
+	host := u.Hostname()
+	parts := strings.Split(host, ".")
+
+	if len(parts) < 2 {
+		return fallbackURL
+	}
+
+	// Reconstruct the root domain from the last two parts.
+	//    e.g., "otel.kloudmate.dev" -> "kloudmate.dev"
+	rootDomain := parts[len(parts)-2] + "." + parts[len(parts)-1]
+
+	// Build the new URL using the robust url.URL struct
+	updateURL := url.URL{
+		Scheme: u.Scheme,               // Use the original scheme (e.g., "https")
+		Host:   "api." + rootDomain,    // Prepend "api." to the new host
+		Path:   "/agents/config-check", // Set the static path
+	}
+
+	return updateURL.String()
+}
+```
+
+### --docker-mode
+
+<ParamField path="docker-mode" type="boolean" default="false">
+  Enable Docker mode with specialized configuration paths and behavior.
+  
+  **Environment Variable:** `KM_DOCKER_MODE`
+  
+  **Example:**
+  ```bash
+  kmagent start --docker-mode
+  ```
+</ParamField>
+
+When enabled:
+- Configuration path defaults to `/etc/kmagent/config.yaml`
+- Docker-specific integrations may be enabled
+- Service wrapper behavior is adjusted for containerized environments
+
+### --docker-endpoint
+
+<ParamField path="docker-endpoint" type="string">
+  Docker daemon endpoint for container monitoring and metrics collection in Docker mode.
+  
+  **Environment Variable:** `KM_DOCKER_ENDPOINT`
+  
+  **Example:**
+  ```bash
+  kmagent start --docker-mode --docker-endpoint="unix:///var/run/docker.sock"
+  ```
+</ParamField>
+
+### --version
+
+Display version information and exit.
+
+```bash
+kmagent --version
+```
+
+**Output:**
+```
+kmagent version 0.1.0
+```
+
+### --help
+
+Display help information for commands and options.
+
+```bash
+kmagent --help
+kmagent start --help
+```
+
+## Configuration File
+
+All CLI options can be specified in a YAML configuration file:
+
+```yaml /etc/kmagent/agent-config.yaml
+# OpenTelemetry collector configuration file path
+config: /etc/kmagent/otel-config.yaml
+
+# KloudMate backend endpoints
+collector-endpoint: https://otel.kloudmate.com:4318
+update-endpoint: https://api.kloudmate.com/agents/config-check
+
+# Authentication
+api-key: km_xxxxxxxxxxxxx
+
+# Configuration update polling
+config-check-interval: 60
+
+# Docker mode settings
+docker-mode: false
+docker-endpoint: unix:///var/run/docker.sock
+```
+
+Load the configuration file with:
+
+```bash
+kmagent start --agent-config="/etc/kmagent/agent-config.yaml"
+```
+
+## Service Management
+
+The agent includes built-in service management support for multiple platforms using the [kardianos/service](https://github.com/kardianos/service) library.
+
+From `cmd/kmagent/main.go:121-133`:
+
+```go
+func makeService(p *Program) (service.Service, error) {
+	svcConfig := &service.Config{
+		Name:        "kmagent",
+		DisplayName: "KloudMate Agent",
+		Description: "KloudMate Agent for OpenTelemetry auto instrumentation",
+	}
+	svc, err := service.New(p, svcConfig)
+	if err != nil {
+		return nil, fmt.Errorf("error creating service: %w", err)
+	}
+	return svc, nil
+}
+```
+
+**Service Configuration:**
+- **Name:** `kmagent`
+- **Display Name:** KloudMate Agent
+- **Description:** KloudMate Agent for OpenTelemetry auto instrumentation
+
+### Systemd (Linux)
+
+Create a systemd service unit:
+
+```ini /etc/systemd/system/kmagent.service
+[Unit]
+Description=KloudMate Agent for OpenTelemetry auto instrumentation
+After=network.target
+
+[Service]
+Type=simple
+User=kmagent
+Group=kmagent
+ExecStart=/usr/local/bin/kmagent start --agent-config=/etc/kmagent/agent-config.yaml
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Manage the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable kmagent
+sudo systemctl start kmagent
+sudo systemctl status kmagent
+```
+
+### Launchd (macOS)
+
+Create a launchd plist:
+
+```xml ~/Library/LaunchAgents/com.kloudmate.agent.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kloudmate.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/kmagent</string>
+        <string>start</string>
+        <string>--agent-config</string>
+        <string>/Library/Application Support/kmagent/agent-config.yaml</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+```
+
+Manage the service:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.kloudmate.agent.plist
+launchctl start com.kloudmate.agent
+launchctl stop com.kloudmate.agent
+```
+
+### Docker
+
+Run as a Docker container:
+
+```bash
+docker run -d \
+  --name kmagent \
+  --restart unless-stopped \
+  -v /etc/kmagent:/etc/kmagent \
+  -e KM_API_KEY=km_xxxxxxxxxxxxx \
+  -e KM_DOCKER_MODE=true \
+  kloudmate/kmagent:latest \
+  start --agent-config=/etc/kmagent/agent-config.yaml
+```
+
+## Graceful Shutdown
+
+The agent implements graceful shutdown with proper cleanup:
+
+From `cmd/kmagent/main.go:62-88`:
+
+```go
+func (p *Program) Stop(s service.Service) error {
+	p.logger.Info("Stopping service...")
+	// 1. Signal all dependent components to stop
+	if p.cancelFunc != nil {
+		p.logger.Info("Cancelling program context...")
+		p.cancelFunc()
+	}
+	// 2. Shutdown the agent gracefully
+	if p.kmAgent != nil {
+		p.logger.Info("Shutting down KloudMate agent...")
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer shutdownCancel()
+		if err := p.kmAgent.Shutdown(shutdownCtx); err != nil {
+			p.logger.Errorf("Error during agent shutdown: %v", err)
+		} else {
+			p.logger.Info("KloudMate agent shut down successfully.")
+		}
+	}
+	// 3. Wait for the main program goroutine to finish
+	p.logger.Info("Waiting for program run goroutine to complete...")
+	p.wg.Wait()
+
+	p.logger.Info("Service stopped successfully.")
+	return nil
+}
+```
+
+**Shutdown sequence:**
+1. Cancel context to signal all goroutines
+2. Gracefully shutdown collector with 30-second timeout
+3. Wait for all goroutines to complete
+4. Flush logs before exit
+
+## Logging
+
+The agent uses structured logging with automatic rotation:
+
+From `cmd/kmagent/main.go:136-158`:
+
+```go
+func getFileLogger(logFile string) (*zap.SugaredLogger, error) {
+	// Lumberjack handles log rotation
+	writer := zapcore.AddSync(&lumberjack.Logger{
+		Filename:   logFile,
+		MaxSize:    10, // MB
+		MaxBackups: 1,
+		MaxAge:     7,    // days
+		Compress:   true, // compress old logs
+	})
+
+	encoderConfig := zap.NewProductionEncoderConfig()
+	encoderConfig.TimeKey = "timestamp"
+	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	encoder := zapcore.NewJSONEncoder(encoderConfig)
+
+	core := zapcore.NewTee(
+		zapcore.NewCore(encoder, writer, zapcore.InfoLevel),
+		zapcore.NewCore(zapcore.NewConsoleEncoder(encoderConfig), zapcore.AddSync(os.Stdout), zapcore.DebugLevel),
+	)
+
+	logger := zap.New(core)
+	return logger.Sugar(), nil
+}
+```
+
+**Log configuration:**
+- **Format:** JSON with ISO8601 timestamps
+- **File output:** Info level and above
+- **Console output:** Debug level and above
+- **Rotation:** 10MB per file
+- **Retention:** 7 days, 1 backup
+- **Compression:** Enabled for rotated logs
+
+## Environment Variables
+
+All configuration options can be set via environment variables:
+
+```bash
+export KM_AGENT_CONFIG="/etc/kmagent/agent-config.yaml"
+export KM_COLLECTOR_CONFIG="/etc/kmagent/otel-config.yaml"
+export KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+export KM_API_KEY="km_xxxxxxxxxxxxx"
+export KM_CONFIG_CHECK_INTERVAL="60"
+export KM_UPDATE_ENDPOINT="https://api.kloudmate.com/agents/config-check"
+export KM_DOCKER_MODE="false"
+export KM_DOCKER_ENDPOINT="unix:///var/run/docker.sock"
+```
+
+## Examples
+
+### Basic Usage
+
+Start with minimal configuration:
+
+```bash
+kmagent start \
+  --api-key="km_xxxxxxxxxxxxx" \
+  --config="/etc/kmagent/otel-config.yaml"
+```
+
+### Custom Endpoints
+
+Use custom collector and API endpoints:
+
+```bash
+kmagent start \
+  --api-key="km_xxxxxxxxxxxxx" \
+  --collector-endpoint="https://otel.example.com:4318" \
+  --update-endpoint="https://api.example.com/agents/config-check" \
+  --config="/etc/kmagent/otel-config.yaml"
+```
+
+### Docker Deployment
+
+Run in Docker mode:
+
+```bash
+kmagent start \
+  --api-key="km_xxxxxxxxxxxxx" \
+  --docker-mode \
+  --docker-endpoint="unix:///var/run/docker.sock"
+```
+
+### Configuration File
+
+Use a configuration file for all options:
+
+```bash
+kmagent start --agent-config="/etc/kmagent/agent-config.yaml"
+```
+
+### Disable Remote Config
+
+Disable automatic configuration updates:
+
+```bash
+kmagent start \
+  --api-key="km_xxxxxxxxxxxxx" \
+  --config="/etc/kmagent/otel-config.yaml" \
+  --config-check-interval=0
+```
+
+## Troubleshooting
+
+### Check Agent Status
+
+View service status:
+
+```bash
+# Systemd
+sudo systemctl status kmagent
+
+# Launchd
+launchctl list | grep kloudmate
+```
+
+### View Logs
+
+Logs are written to both file and console:
+
+```bash
+# Systemd journal
+sudo journalctl -u kmagent -f
+
+# Log file (if configured)
+tail -f /var/log/kmagent.log
+```
+
+### Configuration Validation
+
+Test configuration without starting:
+
+```bash
+# Verify YAML syntax
+yamllint /etc/kmagent/agent-config.yaml
+
+# Check file permissions
+ls -la /etc/kmagent/
+```
+
+### Common Issues
+
+<AccordionGroup>
+  <Accordion title="Permission denied errors">
+    Ensure the agent has read access to configuration files and write access to the config directory:
+    
+    ```bash
+    sudo chown -R kmagent:kmagent /etc/kmagent
+    sudo chmod 755 /etc/kmagent
+    sudo chmod 644 /etc/kmagent/*.yaml
+    ```
+  </Accordion>
+  
+  <Accordion title="Failed to load configuration">
+    Verify the YAML syntax and required fields:
+    
+    ```bash
+    # Check YAML syntax
+    yamllint /etc/kmagent/agent-config.yaml
+    
+    # Verify API key is set
+    echo $KM_API_KEY
+    ```
+  </Accordion>
+  
+  <Accordion title="Connection refused to collector endpoint">
+    Verify network connectivity and endpoint URL:
+    
+    ```bash
+    # Test connectivity
+    curl -v https://otel.kloudmate.com:4318/v1/traces
+    
+    # Check DNS resolution
+    nslookup otel.kloudmate.com
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="CLI Overview" icon="terminal" href="/api/cli-overview">
+    Overview of all CLI tools and common configuration
+  </Card>
+  <Card title="VM Deployment" icon="server" href="/deploy/vm">
+    Deploy kmagent on virtual machines
+  </Card>
+  <Card title="Docker Deployment" icon="docker" href="/deploy/docker">
+    Run kmagent in Docker containers
+  </Card>
+  <Card title="Configuration" icon="file" href="/customize/configuration">
+    OpenTelemetry collector configuration reference
+  </Card>
+</CardGroup>

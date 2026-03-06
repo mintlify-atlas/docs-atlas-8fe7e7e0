@@ -1,0 +1,437 @@
+---
+title: Docker Installation
+description: Deploy the KloudMate Agent as a Docker container for host-level monitoring
+icon: docker
+---
+
+The KloudMate Agent Docker deployment provides a containerized version of the agent that collects host-level metrics and logs through volume mounts.
+
+## Prerequisites
+
+### Required
+
+- Docker Engine installed and running (version 20.10+ recommended)
+- Access to `/var/run/docker.sock`
+- Root or sudo access to run privileged containers
+- API Key from [KloudMate Settings](https://app.kloudmate.com/settings/)
+
+### Docker Installation
+
+If Docker is not installed, follow the [official Docker installation guide](https://docs.docker.com/engine/install/).
+
+Verify Docker is running:
+```bash
+docker --version
+docker ps
+```
+
+## Quick Installation
+
+Install and run the agent with a single command:
+
+```bash
+KM_API_KEY="<YOUR_API_KEY>" KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_docker.sh)"
+```
+
+<Note>
+Replace `<YOUR_API_KEY>` with your actual API key.
+</Note>
+
+## Installation Process
+
+<Steps>
+  <Step title="Download and Execute Installation Script">
+    The script validates Docker installation and environment variables:
+    
+    ```bash
+    KM_API_KEY="your-api-key" \
+    KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+    bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_docker.sh)"
+    ```
+    
+    The installer will:
+    1. Verify Docker is installed and running
+    2. Validate required environment variables
+    3. Optionally prompt for additional directories to monitor
+    4. Pull the latest agent image
+    5. Stop and remove any existing `km-agent` container
+    6. Start the new container with proper configuration
+  </Step>
+  
+  <Step title="Configure Additional Log Directories (Optional)">
+    During installation, you'll be prompted:
+    
+    ```
+    📂 Do you want to monitor additional directories for logs? (y/n):
+    ```
+    
+    If you answer `y`, you can specify custom directories:
+    
+    ```
+    📁 Enter directory to monitor (leave empty to finish): /var/log/myapp
+    📁 Enter directory to monitor (leave empty to finish): /opt/application/logs
+    📁 Enter directory to monitor (leave empty to finish): 
+    ```
+    
+    These directories will be:
+    - Mounted as read-only volumes into the container
+    - Added to the filelog receiver configuration
+  </Step>
+  
+  <Step title="Verify Container is Running">
+    Check the container status:
+    
+    ```bash
+    docker ps -f name=km-agent
+    ```
+    
+    Expected output:
+    ```
+    CONTAINER ID   IMAGE                              STATUS          NAMES
+    abc123def456   ghcr.io/kloudmate/km-agent:latest  Up 2 minutes    km-agent
+    ```
+  </Step>
+</Steps>
+
+## Manual Docker Installation
+
+For environments where you prefer manual control:
+
+### Pull the Image
+
+```bash
+docker pull ghcr.io/kloudmate/km-agent:latest
+```
+
+### Run the Container
+
+```bash
+docker run -d \
+  --privileged \
+  --pid host \
+  --restart always \
+  --network host \
+  --name km-agent \
+  -e KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+  -e KM_API_KEY="your-api-key" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /var/log:/var/log \
+  -v /var/lib/docker/containers:/var/lib/docker/containers:ro \
+  -v /:/hostfs:ro \
+  ghcr.io/kloudmate/km-agent:latest
+```
+
+### With Additional Log Directories
+
+```bash
+docker run -d \
+  --privileged \
+  --pid host \
+  --restart always \
+  --network host \
+  --name km-agent \
+  -e KM_COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" \
+  -e KM_API_KEY="your-api-key" \
+  -e FILELOG_PATHS="/var/log/myapp/**/*,/opt/application/logs/**/*" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /var/log:/var/log \
+  -v /var/lib/docker/containers:/var/lib/docker/containers:ro \
+  -v /:/hostfs:ro \
+  -v /var/log/myapp:/var/log/myapp:ro \
+  -v /opt/application/logs:/opt/application/logs:ro \
+  ghcr.io/kloudmate/km-agent:latest
+```
+
+## Container Configuration
+
+### Environment Variables
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|----------|
+| `KM_API_KEY` | Yes | Authentication key for KloudMate platform | - |
+| `KM_COLLECTOR_ENDPOINT` | Yes | OTLP endpoint for data export | - |
+| `FILELOG_PATHS` | No | Comma-separated glob patterns for log files | - |
+| `DOCKER_SOCK_PATH` | No | Path to Docker socket | `/var/run/docker.sock` |
+
+### Volume Mounts
+
+The container requires these volume mounts for full functionality:
+
+| Host Path | Container Path | Mode | Purpose |
+|-----------|---------------|------|----------|
+| `/var/run/docker.sock` | `/var/run/docker.sock` | rw | Docker API access for container metrics |
+| `/var/log` | `/var/log` | rw | System log collection |
+| `/var/lib/docker/containers` | `/var/lib/docker/containers` | ro | Container log files |
+| `/` | `/hostfs` | ro | Host filesystem access for metrics |
+
+### Container Flags
+
+| Flag | Purpose |
+|------|----------|
+| `--privileged` | Required for accessing host-level metrics (CPU, disk, network) |
+| `--pid host` | Share host PID namespace for process monitoring |
+| `--network host` | Use host networking for accurate network metrics |
+| `--restart always` | Auto-restart container on failure or system reboot |
+
+<Warning>
+The `--privileged` flag grants extensive permissions. Only run this container on trusted systems. This is required for the hostmetrics receiver to access system-level information.
+</Warning>
+
+## Docker Image Details
+
+### Image Repository
+
+```
+ghcr.io/kloudmate/km-agent:latest
+```
+
+### Supported Tags
+
+- `latest` - Latest stable release
+- `v1.2.0` - Specific version tag
+- `develop` - Development builds (not recommended for production)
+
+### Image Layers
+
+The image is built using multi-stage builds:
+
+```dockerfile Dockerfile
+FROM golang:1.25.3-alpine3.22 AS buildstage
+WORKDIR /app
+COPY go.mod go.sum ./
+COPY . .
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -a -tags linux -ldflags "-w -s -X 'main.version=${VERSION}'" \
+    -o /kmagent ./cmd/kmagent/...
+
+FROM gcr.io/distroless/static-debian11
+COPY --from=buildstage /kmagent /kmagent
+COPY ./configs/docker-col-config.yaml /config.yaml
+EXPOSE 4317 4318
+ENTRYPOINT ["/kmagent", "--docker-mode", "--config", "/config.yaml", "start"]
+```
+
+**Base Image**: `gcr.io/distroless/static-debian11` (minimal, secure base)
+
+**Exposed Ports**:
+- `4317` - OTLP gRPC receiver
+- `4318` - OTLP HTTP receiver
+
+## Container Management
+
+### View Logs
+
+```bash
+# View recent logs
+docker logs km-agent --tail 100
+
+# Follow logs in real-time
+docker logs km-agent -f
+
+# View logs with timestamps
+docker logs km-agent -t
+```
+
+### Restart Container
+
+```bash
+docker restart km-agent
+```
+
+### Stop Container
+
+```bash
+docker stop km-agent
+```
+
+### Start Container
+
+```bash
+docker start km-agent
+```
+
+### Update to Latest Version
+
+```bash
+# Pull latest image
+docker pull ghcr.io/kloudmate/km-agent:latest
+
+# Stop and remove old container
+docker stop km-agent
+docker rm km-agent
+
+# Run new container (use your previous docker run command)
+docker run -d --privileged --pid host --restart always ...
+```
+
+### Inspect Container
+
+```bash
+# View container details
+docker inspect km-agent
+
+# Check resource usage
+docker stats km-agent
+
+# Execute commands inside container
+docker exec -it km-agent sh
+```
+
+## Uninstallation
+
+### Automated Uninstall
+
+Use the installation script with the `uninstall` argument:
+
+```bash
+bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_docker.sh)" -- uninstall
+```
+
+This will:
+1. Stop the `km-agent` container
+2. Remove the container
+3. Remove the Docker image
+
+### Manual Uninstall
+
+```bash
+# Stop and remove container
+docker stop km-agent
+docker rm km-agent
+
+# Remove image (optional)
+docker rmi ghcr.io/kloudmate/km-agent:latest
+```
+
+## Troubleshooting
+
+### Docker Not Installed Error
+
+```
+Docker is not installed on the system
+Please install docker first: https://docs.docker.com/engine/install/
+```
+
+**Solution**: Install Docker Engine following the [official documentation](https://docs.docker.com/engine/install/).
+
+### Permission Denied on Docker Socket
+
+```
+Got permission denied while trying to connect to the Docker daemon socket
+```
+
+**Solution**: Add your user to the docker group or use sudo:
+```bash
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+Or run with sudo:
+```bash
+sudo bash -c "$(curl -L https://cdn.kloudmate.com/scripts/install_docker.sh)"
+```
+
+### Container Fails to Start
+
+**Check logs**:
+```bash
+docker logs km-agent
+```
+
+**Common issues**:
+- Invalid API key or collector endpoint
+- Port conflicts (4317, 4318 already in use)
+- Missing required volume mounts
+- Insufficient permissions (need `--privileged`)
+
+### No Metrics Being Collected
+
+**Verify mounts**:
+```bash
+docker inspect km-agent | grep -A 20 "Mounts"
+```
+
+Ensure these are present:
+- `/var/run/docker.sock`
+- `/` → `/hostfs`
+- `/var/lib/docker/containers`
+
+### Directory Does Not Exist Error
+
+```
+❌ Directory '/path/to/dir' does not exist. Try again.
+```
+
+**Solution**: Create the directory first or verify the path:
+```bash
+ls -la /path/to/dir
+```
+
+### Container Exits Immediately
+
+**Check exit code**:
+```bash
+docker ps -a -f name=km-agent
+```
+
+**View detailed logs**:
+```bash
+docker logs km-agent
+```
+
+**Common causes**:
+- Missing required environment variables (`KM_API_KEY`, `KM_COLLECTOR_ENDPOINT`)
+- Invalid configuration file
+- Network connectivity issues
+
+## Docker Compose
+
+For Docker Compose deployments:
+
+```yaml docker-compose.yml
+version: '3.8'
+
+services:
+  km-agent:
+    image: ghcr.io/kloudmate/km-agent:latest
+    container_name: km-agent
+    privileged: true
+    pid: host
+    network_mode: host
+    restart: always
+    environment:
+      - KM_API_KEY=your-api-key
+      - KM_COLLECTOR_ENDPOINT=https://otel.kloudmate.com:4318
+      - FILELOG_PATHS=/var/log/myapp/**/*
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/log:/var/log
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /:/hostfs:ro
+      - /var/log/myapp:/var/log/myapp:ro
+```
+
+Deploy with:
+```bash
+docker-compose up -d
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configure Agent" icon="gear" href="/configuration/overview">
+    Customize OpenTelemetry receivers and log collection
+  </Card>
+  <Card title="Monitor Containers" icon="container-storage" href="/features/container-monitoring">
+    Learn about Docker container monitoring features
+  </Card>
+</CardGroup>
+
+## Support
+
+For Docker installation issues:
+
+- 📧 Email: support@kloudmate.com
+- 🐛 GitHub: [Report an issue](https://github.com/kloudmate/km-agent/issues)
+- 🐳 Docker Hub: [Image details](https://github.com/kloudmate/km-agent/pkgs/container/km-agent)

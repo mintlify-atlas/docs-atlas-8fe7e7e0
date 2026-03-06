@@ -1,0 +1,112 @@
+---
+title: "Introduction"
+description: "OpenTelemetry Collector distribution with automated deployment and remote configuration"
+---
+
+<img
+  className="block dark:hidden rounded-lg border border-gray-200"
+  src="https://raw.githubusercontent.com/kloudmate/km-agent/refs/heads/develop/docs/banner_km_agent.png"
+  alt="KloudMate Agent Banner"
+/>
+<img
+  className="hidden dark:block rounded-lg border border-gray-800"
+  src="https://raw.githubusercontent.com/kloudmate/km-agent/refs/heads/develop/docs/banner_km_agent.png"
+  alt="KloudMate Agent Banner"
+/>
+
+## What is KloudMate Agent?
+
+KloudMate Agent is an [OpenTelemetry Collector distribution](https://opentelemetry.io/docs/concepts/distributions/) that extends the upstream OpenTelemetry Collector with additional capabilities for simplified deployment, remote configuration management, and automated instrumentation. It bundles a curated set of receivers, processors, exporters, and extensions optimized for observability in Kubernetes, Linux, Docker, and Windows environments.
+
+### Key Problems Solved
+
+<CardGroup cols={2}>
+  <Card title="Complex Configuration" icon="gear">
+    Eliminates the steep learning curve of OpenTelemetry Collector configuration with remote management via web interface
+  </Card>
+  <Card title="Manual Installation" icon="download">
+    Provides automated installation scripts for Linux, Docker, Kubernetes, and Windows
+  </Card>
+  <Card title="Configuration Management" icon="server">
+    Enables remote configuration through a web interface without SSH access to target machines
+  </Card>
+  <Card title="Auto-Instrumentation" icon="wand-magic-sparkles">
+    Built-in support for automatic instrumentation of Java, Python, Node.js, Go, and .NET applications
+  </Card>
+</CardGroup>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Automated Installation" icon="rocket" href="/installation/overview">
+    One-command deployment across Linux, Docker, and Kubernetes environments
+  </Card>
+  <Card title="Remote Configuration" icon="cloud" href="/configuration/remote-config">
+    Configure agents through a web interface without target machine access
+  </Card>
+  <Card title="Lifecycle Management" icon="arrows-rotate" href="/features/lifecycle-management">
+    Comprehensive management of OpenTelemetry Collector instances
+  </Card>
+  <Card title="Synthetic Monitoring" icon="chart-line" href="/features/synthetic-monitoring">
+    Built-in health checks and monitoring capabilities
+  </Card>
+  <Card title="Multi-Platform Support" icon="layer-group" href="/features/multi-platform-support">
+    Native support for Kubernetes, Linux, Docker, and Windows
+  </Card>
+  <Card title="OpenTelemetry Components" icon="puzzle-piece" href="/components/overview">
+    Curated set of receivers, processors, exporters, and extensions
+  </Card>
+</CardGroup>
+
+## Supported Environments
+
+<CardGroup cols={2}>
+  <Card title="Linux" icon="linux">
+    Debian/Ubuntu, RHEL/CentOS, and other major distributions
+  </Card>
+  <Card title="Docker" icon="docker">
+    Containerized deployment with host metrics and log collection
+  </Card>
+  <Card title="Kubernetes" icon="dharmachakra">
+    DaemonSet and Deployment modes with auto-instrumentation
+  </Card>
+  <Card title="Windows" icon="windows">
+    Windows Server 2016+ with native service integration
+  </Card>
+</CardGroup>
+
+## Quick Start
+
+Get started with KloudMate Agent in minutes:
+
+<CardGroup cols={2}>
+  <Card title="Quick Installation" icon="bolt" href="/quickstart">
+    Install and configure your first agent
+  </Card>
+  <Card title="Installation Guide" icon="book-open" href="/installation/overview">
+    Detailed installation instructions for each platform
+  </Card>
+  <Card title="Configuration Guide" icon="sliders" href="/configuration/overview">
+    Learn how to configure the agent for your environment
+  </Card>
+  <Card title="Architecture Overview" icon="sitemap" href="/architecture/overview">
+    Understand how KloudMate Agent works under the hood
+  </Card>
+</CardGroup>
+
+## Community and Support
+
+<CardGroup cols={2}>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/kloudmate/km-agent">
+    View source code, report issues, and contribute
+  </Card>
+  <Card title="Documentation" icon="book" href="https://docs.kloudmate.com">
+    Complete product documentation
+  </Card>
+  <Card title="Email Support" icon="envelope" href="mailto:support@kloudmate.com">
+    Get help from the KloudMate team
+  </Card>
+  <Card title="Dashboard Templates" icon="table-columns" href="https://templates.kloudmate.com">
+    Explore curated dashboard templates
+  </Card>
+</CardGroup>

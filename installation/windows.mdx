@@ -1,0 +1,537 @@
+---
+title: Windows Installation
+description: Install the KloudMate Agent on Windows Server and Desktop systems
+icon: windows
+---
+
+The KloudMate Agent for Windows provides a GUI-based installer that installs the agent as a Windows service for continuous monitoring of Windows systems.
+
+## System Requirements
+
+### Supported Operating Systems
+
+- Windows Server 2016 or later
+- Windows 10 (64-bit)
+- Windows 11 (64-bit)
+
+### Prerequisites
+
+- Administrator privileges
+- .NET Framework 4.5+ (usually pre-installed)
+- Network connectivity to KloudMate endpoints
+- API Key from [KloudMate Settings](https://app.kloudmate.com/settings/)
+
+## Installation Methods
+
+### Method 1: GUI Installer (Recommended)
+
+<Steps>
+  <Step title="Download Installer">
+    Download the latest installer from the [GitHub Releases](https://github.com/kloudmate/km-agent/releases) page:
+    
+    ```powershell
+    # Using PowerShell
+    Invoke-WebRequest -Uri "https://github.com/kloudmate/km-agent/releases/latest/download/kmagent-setup.exe" -OutFile "kmagent-setup.exe"
+    ```
+    
+    Or download directly from:
+    ```
+    https://github.com/kloudmate/km-agent/releases/latest
+    ```
+    
+    Look for the file: `kmagent-{version}-setup.exe`
+  </Step>
+  
+  <Step title="Run Installer">
+    Right-click the installer and select **"Run as Administrator"**:
+    
+    ```powershell
+    .\kmagent-setup.exe
+    ```
+    
+    <Warning>
+    Administrator privileges are required to install Windows services and write to protected directories.
+    </Warning>
+  </Step>
+  
+  <Step title="Configure Installation">
+    The installer will prompt for:
+    
+    - **API Key** (required): Your KloudMate authentication key
+    - **Collector Endpoint** (required): Default is `https://otel.kloudmate.com:4318`
+    
+    The wizard validates that required fields are not empty before proceeding.
+  </Step>
+  
+  <Step title="Complete Installation">
+    The installer will:
+    1. Install the `kmagent.exe` binary to `C:\Program Files\KloudMate Agent\`
+    2. Generate configuration file at `C:\ProgramData\KloudMate Agent\agent.yaml`
+    3. Create and start the Windows service named `kmagent`
+    4. Configure the service to start automatically on system boot
+  </Step>
+  
+  <Step title="Verify Installation">
+    Check that the service is running:
+    
+    ```powershell
+    Get-Service kmagent
+    ```
+    
+    Expected output:
+    ```
+    Status   Name               DisplayName
+    ------   ----               -----------
+    Running  kmagent            KloudMate agent for OpenTelemetry
+    ```
+  </Step>
+</Steps>
+
+### Method 2: Silent Installation
+
+For automated deployments, use silent installation mode:
+
+```powershell
+.\kmagent-setup.exe /SILENT /API_KEY="your-api-key" /COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318"
+```
+
+**Parameters**:
+- `/SILENT` - Run installer without GUI
+- `/VERYSILENT` - Completely silent (no progress window)
+- `/API_KEY="..."` - Set API key
+- `/COLLECTOR_ENDPOINT="..."` - Set collector endpoint
+- `/DIR="C:\Custom\Path"` - Custom installation directory
+- `/LOG="install.log"` - Create installation log
+
+Example with logging:
+```powershell
+.\kmagent-setup.exe /VERYSILENT /API_KEY="km_xxx" /COLLECTOR_ENDPOINT="https://otel.kloudmate.com:4318" /LOG="C:\Temp\kmagent-install.log"
+```
+
+## Installation Details
+
+### Installed Components
+
+The installer creates the following structure:
+
+```
+C:\Program Files\KloudMate Agent\
+├── kmagent.exe           # Main executable
+├── config.yaml           # Default OpenTelemetry configuration
+└── unins000.exe          # Uninstaller
+
+C:\ProgramData\KloudMate Agent\
+└── agent.yaml            # Agent configuration (API key, endpoints)
+```
+
+### Windows Service Configuration
+
+The agent is installed as a Windows service with these properties:
+
+| Property | Value |
+|----------|-------|
+| **Service Name** | `kmagent` |
+| **Display Name** | `KloudMate agent for OpenTelemetry` |
+| **Description** | Monitors system metrics and logs using KMAgent |
+| **Startup Type** | Automatic |
+| **Run As** | Local System Account |
+| **Service Binary** | `C:\Program Files\KloudMate Agent\kmagent.exe --agent-config "C:\ProgramData\KloudMate Agent\agent.yaml" start` |
+
+### Configuration Files
+
+#### Agent Configuration
+
+Location: `C:\ProgramData\KloudMate Agent\agent.yaml`
+
+Generated during installation:
+```yaml
+api-key: "your-api-key"
+collector-endpoint: "https://otel.kloudmate.com:4318"
+```
+
+#### OpenTelemetry Configuration
+
+Location: `C:\Program Files\KloudMate Agent\config.yaml`
+
+Contains the OpenTelemetry Collector pipeline configuration (receivers, processors, exporters).
+
+## Service Management
+
+### Using Services Console
+
+1. Press `Win + R`
+2. Type `services.msc`
+3. Find "KloudMate agent for OpenTelemetry"
+4. Right-click to Start, Stop, or Restart
+
+### Using PowerShell
+
+```powershell
+# Check service status
+Get-Service kmagent
+
+# Start the service
+Start-Service kmagent
+
+# Stop the service
+Stop-Service kmagent
+
+# Restart the service
+Restart-Service kmagent
+
+# View service details
+Get-Service kmagent | Format-List *
+
+# Check if service is running
+if ((Get-Service kmagent).Status -eq 'Running') {
+    Write-Host "KM Agent is running"
+}
+```
+
+### Using Command Prompt (sc.exe)
+
+```cmd
+# Query service status
+sc query kmagent
+
+# Start service
+sc start kmagent
+
+# Stop service
+sc stop kmagent
+
+# View service configuration
+sc qc kmagent
+
+# Change startup type to automatic
+sc config kmagent start= auto
+
+# Change startup type to manual
+sc config kmagent start= demand
+```
+
+## View Logs
+
+### Event Viewer
+
+The agent logs to Windows Event Viewer:
+
+1. Press `Win + R`
+2. Type `eventvwr.msc`
+3. Navigate to **Windows Logs** → **Application**
+4. Filter by source: **kmagent**
+
+### PowerShell Event Log Query
+
+```powershell
+# View recent agent events
+Get-EventLog -LogName Application -Source kmagent -Newest 50
+
+# View errors only
+Get-EventLog -LogName Application -Source kmagent -EntryType Error -Newest 20
+
+# Export logs to file
+Get-EventLog -LogName Application -Source kmagent -Newest 100 | 
+    Export-Csv -Path "C:\Temp\kmagent-logs.csv"
+```
+
+### Application Log Files
+
+If file logging is configured, check:
+```
+C:\ProgramData\KloudMate Agent\logs\
+```
+
+## Updating the Agent
+
+<Steps>
+  <Step title="Download New Version">
+    Download the latest installer from [GitHub Releases](https://github.com/kloudmate/km-agent/releases).
+  </Step>
+  
+  <Step title="Run New Installer">
+    The installer will:
+    1. Detect the existing installation
+    2. Stop the running service
+    3. Replace the executable
+    4. Preserve your configuration files
+    5. Restart the service
+    
+    ```powershell
+    .\kmagent-new-version-setup.exe
+    ```
+  </Step>
+  
+  <Step title="Verify Update">
+    Check the version:
+    
+    ```powershell
+    & "C:\Program Files\KloudMate Agent\kmagent.exe" version
+    ```
+  </Step>
+</Steps>
+
+## Uninstallation
+
+### Method 1: Programs and Features
+
+1. Open **Control Panel** → **Programs** → **Programs and Features**
+2. Find **KloudMate Agent**
+3. Click **Uninstall**
+4. Follow the uninstall wizard
+
+### Method 2: PowerShell
+
+```powershell
+# Find the uninstaller
+$uninstaller = "C:\Program Files\KloudMate Agent\unins000.exe"
+
+# Run silent uninstall
+Start-Process -FilePath $uninstaller -ArgumentList "/SILENT" -Wait
+```
+
+### Method 3: Manual Uninstall
+
+<Steps>
+  <Step title="Stop the Service">
+    ```powershell
+    Stop-Service kmagent
+    ```
+  </Step>
+  
+  <Step title="Delete the Service">
+    ```cmd
+    sc delete kmagent
+    ```
+  </Step>
+  
+  <Step title="Remove Files">
+    ```powershell
+    Remove-Item -Path "C:\Program Files\KloudMate Agent" -Recurse -Force
+    Remove-Item -Path "C:\ProgramData\KloudMate Agent" -Recurse -Force
+    ```
+  </Step>
+  
+  <Step title="Clean Registry (Optional)">
+    Remove registry entries under:
+    ```
+    HKEY_LOCAL_MACHINE\SOFTWARE\KloudMate
+    HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{f0bcc1d7-e444-47ea-b6ce-18c671f5889d}
+    ```
+  </Step>
+</Steps>
+
+## Installer Script Details
+
+The Windows installer is built using Inno Setup. Key sections from the installer script:
+
+### Service Installation
+
+```pascal
+function InstallService(): Boolean;
+var
+  ServicePath: String;
+  ConfigPath: String;
+  BinPath: String;
+begin
+  ServicePath := ExpandConstant('{app}\kmagent.exe');
+  ConfigPath := ExpandConstant('{commonappdata}\kmagent\agent.yaml');
+  BinPath := Format('"%s --agent-config "%s" start"', [ServicePath, ConfigPath]);
+  
+  // Create service
+  sc create "kmagent" 
+    binPath= <BinPath>
+    start= auto 
+    DisplayName= "Kloudmate Monitoring Service"
+end;
+```
+
+### Configuration Generation
+
+```pascal
+function GenerateConfigFile(): Boolean;
+var
+  ConfigPath: String;
+begin
+  ConfigPath := ExpandConstant('{commonappdata}\kmagent\agent.yaml');
+  
+  ConfigLines.Add(Format('api-key: "%s"', [StoredAPIKey]));
+  ConfigLines.Add(Format('collector-endpoint: "%s"', [StoredCollectorEndpoint]));
+  
+  ConfigLines.SaveToFile(ConfigPath);
+end;
+```
+
+### Service Management
+
+The installer uses `sc.exe` commands for service management:
+
+```pascal
+// Stop service
+sc stop "kmagent"
+
+// Delete service
+sc delete "kmagent"
+
+// Start service
+sc start "kmagent"
+```
+
+## Troubleshooting
+
+### Installer Fails with "Administrator Required"
+
+**Solution**: Right-click installer and select "Run as Administrator".
+
+### Service Fails to Start
+
+**Check Event Viewer**:
+1. Open Event Viewer (`eventvwr.msc`)
+2. Navigate to Windows Logs → Application
+3. Look for errors from source "kmagent"
+
+**Common causes**:
+- Missing or invalid API key in `C:\ProgramData\KloudMate Agent\agent.yaml`
+- Invalid collector endpoint
+- Network connectivity issues
+- Port conflicts (4317, 4318)
+
+**Validate configuration**:
+```powershell
+Get-Content "C:\ProgramData\KloudMate Agent\agent.yaml"
+```
+
+### Configuration File Not Found
+
+**Check if file exists**:
+```powershell
+Test-Path "C:\ProgramData\KloudMate Agent\agent.yaml"
+```
+
+**Manually create**:
+```powershell
+New-Item -Path "C:\ProgramData\KloudMate Agent" -ItemType Directory -Force
+Set-Content -Path "C:\ProgramData\KloudMate Agent\agent.yaml" -Value @"
+api-key: "your-api-key"
+collector-endpoint: "https://otel.kloudmate.com:4318"
+"@
+```
+
+### Service Crashes on Startup
+
+**Test manually**:
+```powershell
+cd "C:\Program Files\KloudMate Agent"
+.\kmagent.exe --agent-config "C:\ProgramData\KloudMate Agent\agent.yaml" start
+```
+
+Check output for specific errors.
+
+### Network Connectivity Issues
+
+**Test endpoint**:
+```powershell
+Test-NetConnection -ComputerName otel.kloudmate.com -Port 4318
+```
+
+**Check firewall**:
+```powershell
+Get-NetFirewallRule | Where-Object {$_.DisplayName -match "kmagent"}
+```
+
+**Add firewall rule if needed**:
+```powershell
+New-NetFirewallRule -DisplayName "KloudMate Agent" -Direction Outbound -Program "C:\Program Files\KloudMate Agent\kmagent.exe" -Action Allow
+```
+
+### Permission Errors
+
+**Check service account**:
+```powershell
+(Get-WmiObject Win32_Service -Filter "Name='kmagent'").StartName
+```
+
+**Grant permissions to config directory**:
+```powershell
+$acl = Get-Acl "C:\ProgramData\KloudMate Agent"
+$rule = New-Object System.Security.AccessControl.FileSystemAccessRule("SYSTEM","FullControl","ContainerInherit,ObjectInherit","None","Allow")
+$acl.SetAccessRule($rule)
+Set-Acl "C:\ProgramData\KloudMate Agent" $acl
+```
+
+### Silent Install Fails
+
+**Check log file**:
+```powershell
+Get-Content "C:\Temp\kmagent-install.log"
+```
+
+**Verify parameters**:
+```powershell
+.\kmagent-setup.exe /? # Show help
+```
+
+## Building the Installer (Advanced)
+
+For developers who want to build the installer from source:
+
+### Prerequisites
+
+- Inno Setup 6+ installed
+- Go 1.24.4+ for building the executable
+- Docker (for build environment)
+
+### Build Process
+
+From the repository root:
+
+```powershell
+# Build Windows executable
+make build-windows
+
+# Build installer
+make build-installer
+```
+
+This creates:
+```
+dist/win/kmagent-{version}-setup.exe
+```
+
+### Makefile Targets
+
+```makefile
+build-windows:
+	@echo "Building kmagent for Windows..."
+	mkdir -p dist/win
+	GOOS=windows CGO_ENABLED=0 go build -tags windows \
+	  -ldflags="-s -w -X main.version=$(VERSION)" \
+	  -o dist/win/kmagent.exe ./cmd/kmagent
+
+build-installer: build-windows
+	cp build/windows/installer.iss dist/win/installer.iss
+	docker run --rm \
+	  -v $(PWD):$(CONTAINER_WORKDIR) \
+	  -w $(CONTAINER_WORKDIR) \
+	  amake/innosetup:64bit-bookworm \
+	  /dMyAppVersion=$(VERSION) "dist/win/installer.iss"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configure Agent" icon="gear" href="/configuration/overview">
+    Customize OpenTelemetry receivers and processors
+  </Card>
+  <Card title="Verify Installation" icon="check" href="/getting-started/verify-installation">
+    Confirm telemetry is flowing to KloudMate
+  </Card>
+</CardGroup>
+
+## Support
+
+For Windows installation issues:
+
+- 📧 Email: support@kloudmate.com
+- 🐛 GitHub: [Report an issue](https://github.com/kloudmate/km-agent/issues)
+- 📝 Event Logs: Check Windows Event Viewer for "kmagent" source
